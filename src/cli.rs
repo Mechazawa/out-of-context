@@ -10,7 +10,7 @@ pub struct Args {
     /// Examples:
     ///   - "https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf"
     ///   - "./my-model.gguf"
-    #[arg(short, long, default_value = "https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf")]
+    #[arg(short, long, default_value = "https://huggingface.co/bartowski/SmolLM-360M-Instruct-GGUF/resolve/main/SmolLM-360M-Instruct-Q3_K_M.gguf")]
     pub model: String,
 
     /// Directory to store downloaded models
@@ -22,7 +22,7 @@ pub struct Args {
     pub prompt_file: PathBuf,
 
     /// Context window size in tokens
-    #[arg(short, long, default_value_t = 2048)]
+    #[arg(short, long, default_value_t = 1024)]
     pub context_size: usize,
 
     /// Optional cap on generated tokens (helpful for readability)

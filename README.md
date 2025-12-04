@@ -39,10 +39,10 @@ An art project that runs a language model on a Raspberry Pi Zero 2 W, generating
 ```
 Options:
   -m, --model <MODEL>          Hugging Face URL or local GGUF path
-                               [default: https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf]
+                               [default: https://huggingface.co/bartowski/SmolLM-360M-Instruct-GGUF/resolve/main/SmolLM-360M-Instruct-Q3_K_M.gguf]
   -d, --model-dir <DIR>        Directory to store downloaded models [default: models]
   -p, --prompt-file <PATH>     Path to system prompt file [default: prompt.txt]
-  -c, --context-size <NUM>     Context window in tokens [default: 2048]
+  -c, --context-size <NUM>     Context window in tokens [default: 1024]
       --max-tokens <NUM>       Optional cap on generated tokens (helpful for inspection)
       --threads <NUM>          Override thread count (default: auto-detect)
       --output-file <PATH>     Mirror output into a file (terminal always streams)
@@ -119,7 +119,7 @@ cargo build --release --target aarch64-unknown-linux-gnu
 
 2. **Generation Loop**
    - Reads system prompt from `prompt.txt`
-   - Tokenizes the prompt and processes it; generation starts immediately after the prompt with a forced first-person "I " prefix (no headings or lists)
+- Tokenizes the prompt and processes it; generation starts immediately after the prompt with a forced first-person "I " prefix (no headings or lists)
    - Enters infinite loop:
      - Samples next token via configured sampler chain
      - Decodes and prints token to stdout
@@ -169,6 +169,9 @@ cargo build --release --target aarch64-unknown-linux-gnu
 
 # Qwen2.5 0.5B Q4_K_M (~300MB)
 ./torment-nexus --model "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+
+# SmolLM 360M Instruct Q3_K_M (~220MB, good fit for Pi)
+./torment-nexus --model "https://huggingface.co/bartowski/SmolLM-360M-Instruct-GGUF/resolve/main/SmolLM-360M-Instruct-Q3_K_M.gguf" --context-size 1024
 
 # TinyLlama v1.1 Q4_K_M (compact, ~220MB)
 ./torment-nexus --model "https://huggingface.co/DarwinAnim8or/TinyLlama_v1.1-Q4_K_M-GGUF/resolve/main/tinyllama_v1.1-q4_k_m.gguf" --context-size 1024
@@ -294,6 +297,7 @@ torment-nexus/
 
 - Default output streams token-by-token to the terminal.
 - The runtime probes for SPI devices (`/dev/spidev*`, `/dev/fb1`) to prepare for an ILI9488 display path; when no display is available (or until the display renderer is wired up) it falls back to terminal output automatically.
+- To inspect output without waiting for overflow, use `--max-tokens` (default run has no cap); default sampling is conservative to reduce loops.
 
 ## Dependencies
 

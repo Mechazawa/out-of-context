@@ -61,7 +61,7 @@ src/
 
 **Generation Loop (`generator.rs`)**:
 - Reads system prompt from `prompt.txt`
-- Tokenizes prompt with BOS token and begins generation directly after the prompt with a forced first-person `"I "` prefix (no headings or lists)
+- Tokenizes prompt with BOS token and begins generation directly after the prompt with a forced first-person `"I "` prefix (no headings, lists, or dialogue)
 - Generates tokens infinitely using configurable sampling (temperature, top-p/top-k, penalties, seed)
 - Streams output token-by-token to stdout
 - Tracks context usage
@@ -128,10 +128,10 @@ chmod +x torment-nexus
 ## Configuration
 
 ### CLI Arguments
-- `--model <MODEL>` - Hugging Face URL or local GGUF path (default: SmolLM2-135M-Instruct Q4_K_M URL)
+- `--model <MODEL>` - Hugging Face URL or local GGUF path (default: SmolLM-360M-Instruct Q3_K_M URL)
 - `--model-dir <DIR>` - Directory to store downloaded models (default: `models`)
 - `--prompt-file <PATH>` - System prompt file (default: `prompt.txt`)
-- `--context-size <NUM>` - Context window tokens (default: 2048)
+- `--context-size <NUM>` - Context window tokens (default: 1024)
 - `--max-tokens <NUM>` - Optional cap on generated tokens for readability
 - `--threads <NUM>` - Override thread count (default: auto-detect cores)
 - `--output-file <PATH>` - Mirror output into a file (terminal always streams)
