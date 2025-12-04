@@ -1,0 +1,9 @@
+[target.aarch64-unknown-linux-gnu]
+# Use the edge image which includes modern build tools (clang, cmake)
+# Required for llama-cpp-2's bindgen and C++ compilation
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:edge"
+
+[build.env]
+passthrough = [
+    "RUST_BACKTRACE",
+]

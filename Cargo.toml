@@ -4,3 +4,28 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# LLM Integration
+llama-cpp-2 = "0.1.122"
+
+# CLI Argument Parsing
+clap = { version = "4.5", features = ["derive"] }
+
+# HTTP Downloads
+reqwest = { version = "0.12", features = ["blocking", "stream"] }
+tokio = { version = "1.37", features = ["rt-multi-thread", "macros"] }
+
+# Progress Bar
+indicatif = "0.17"
+
+# Error Handling
+anyhow = "1.0"
+
+# Async Utilities (for download streaming)
+futures-util = "0.3"
+
+[profile.release]
+opt-level = "z"        # Optimize for size
+lto = true             # Link-time optimization
+codegen-units = 1      # Better optimization
+strip = true           # Strip symbols from binary
+panic = "abort"        # Smaller binary, no unwinding
