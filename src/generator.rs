@@ -27,6 +27,7 @@ pub fn generate_infinite(
     context: &mut LlamaContext,
     prompt_file: &Path,
     context_size: usize,
+    max_tokens: Option<usize>,
     sampling: SamplingConfig,
     output: &mut OutputTarget,
 ) -> Result<()> {
@@ -57,6 +58,11 @@ pub fn generate_infinite(
     }
 
     println!("Available tokens: {}\n", context_size - tokens_used);
+    if let Some(limit) = max_tokens {
+        println!("Generation cap: {} tokens (override with --max-tokens)", limit);
+    } else {
+        println!("Generation cap: infinite (will panic at 95% context)");
+    }
 
     // Create batch and add prompt tokens
     let mut batch = LlamaBatchWrapper::new(prompt_tokens.len())?;
@@ -83,6 +89,9 @@ pub fn generate_infinite(
     // Prime sampler state with the prompt so penalties have context
     sampler.accept_many(prompt_tokens.iter().copied());
 
+    // Track generated tokens only (excluding the prompt)
+    let mut generated_tokens = 0usize;
+
     // Infinite generation loop
     loop {
         // Check if we're approaching context exhaustion
@@ -90,6 +99,13 @@ pub fn generate_infinite(
             eprintln!("\n\nWARNING: Context window exhausted!");
             eprintln!("The torment nexus has consumed all available memory.");
             panic!("Context overflow - terminating.");
+        }
+
+        if let Some(limit) = max_tokens {
+            if generated_tokens >= limit {
+                eprintln!("\n\nGeneration limit reached ({} tokens).", limit);
+                return Ok(());
+            }
         }
 
         // Sample the next token - get logits from the last token in the batch
@@ -115,6 +131,7 @@ pub fn generate_infinite(
 
         // Increment token counter
         tokens_used += 1;
+        generated_tokens += 1;
 
         // Create batch with just the new token
         let mut next_batch = LlamaBatchWrapper::new(1)?;

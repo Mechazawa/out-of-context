@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
         seed: args.seed,
     };
 
-    let mut output = OutputTarget::autodetect();
+    let mut output = OutputTarget::autodetect(args.output_file.as_ref())?;
 
     // Create context
     let mut context = llm_setup.create_context(args.context_size, threads)?;
@@ -48,6 +48,7 @@ async fn main() -> Result<()> {
         &mut context,
         &args.prompt_file,
         args.context_size,
+        args.max_tokens,
         sampling,
         &mut output,
     )?;

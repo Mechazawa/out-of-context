@@ -25,9 +25,17 @@ pub struct Args {
     #[arg(short, long, default_value_t = 2048)]
     pub context_size: usize,
 
+    /// Optional cap on generated tokens (helpful for readability)
+    #[arg(long)]
+    pub max_tokens: Option<usize>,
+
     /// Number of CPU threads to use (defaults to available cores)
     #[arg(long)]
     pub threads: Option<usize>,
+
+    /// Optional path to mirror output into a file (in addition to terminal)
+    #[arg(long)]
+    pub output_file: Option<PathBuf>,
 
     /// Sampling temperature (higher = more random, 0 = greedy)
     #[arg(long, default_value_t = 0.8)]

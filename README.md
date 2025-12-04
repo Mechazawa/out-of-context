@@ -43,7 +43,9 @@ Options:
   -d, --model-dir <DIR>        Directory to store downloaded models [default: models]
   -p, --prompt-file <PATH>     Path to system prompt file [default: prompt.txt]
   -c, --context-size <NUM>     Context window in tokens [default: 2048]
+      --max-tokens <NUM>       Optional cap on generated tokens (helpful for inspection)
       --threads <NUM>          Override thread count (default: auto-detect)
+      --output-file <PATH>     Mirror output into a file (terminal always streams)
       --temperature <NUM>      Sampling temperature (0 = greedy) [default: 0.8]
       --top-p <NUM>            Nucleus sampling probability mass (1.0 disables) [default: 0.95]
       --top-k <NUM>            Top-k cap (0 disables) [default: 40]
@@ -119,7 +121,7 @@ cargo build --release --target aarch64-unknown-linux-gnu
    - Reads system prompt from `prompt.txt`
    - Tokenizes the prompt and processes it; generation starts immediately after the prompt with no extra headers
    - Enters infinite loop:
-     - Samples next token (greedy sampling)
+     - Samples next token via configured sampler chain
      - Decodes and prints token to stdout
      - Tracks context usage
      - When 95% of context is used:
@@ -167,6 +169,9 @@ cargo build --release --target aarch64-unknown-linux-gnu
 
 # Qwen2.5 0.5B Q4_K_M (~300MB)
 ./torment-nexus --model "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+
+# TinyLlama v1.1 Q4_K_M (compact, ~220MB)
+./torment-nexus --model "https://huggingface.co/DarwinAnim8or/TinyLlama_v1.1-Q4_K_M-GGUF/resolve/main/tinyllama_v1.1-q4_k_m.gguf" --context-size 1024
 ```
 
 ## Memory Optimization
@@ -282,6 +287,8 @@ torment-nexus/
 - **Top-p / Top-k**: Enable nucleus or top-k filtering; set to `1.0`/`0` to disable.
 - **Repetition & Presence penalties**: Tune `--repeat-penalty`, `--repeat-last-n`, `--presence-penalty`, and `--frequency-penalty` to steer style.
 - **Seed**: Pass `--seed` for reproducible runs; omit for a time-based seed.
+- **Max tokens**: Use `--max-tokens` to stop after a fixed count when you need to inspect output without waiting for context exhaustion.
+- **File mirror**: Use `--output-file path` to capture the stream to disk while still seeing it live in the terminal. The repo ignores `*.log` and `*.out` by default.
 
 ## Output & Display
 

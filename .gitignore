@@ -1,2 +1,5 @@
 /target
 /models
+torment-output.log
+*.out
+*.log

@@ -132,7 +132,9 @@ chmod +x torment-nexus
 - `--model-dir <DIR>` - Directory to store downloaded models (default: `models`)
 - `--prompt-file <PATH>` - System prompt file (default: `prompt.txt`)
 - `--context-size <NUM>` - Context window tokens (default: 2048)
+- `--max-tokens <NUM>` - Optional cap on generated tokens for readability
 - `--threads <NUM>` - Override thread count (default: auto-detect cores)
+- `--output-file <PATH>` - Mirror output into a file (terminal always streams)
 - `--temperature <NUM>` - Sampling temperature (0 = greedy, default: 0.8)
 - `--top-p <NUM>` - Nucleus sampling mass (1.0 disables, default: 0.95)
 - `--top-k <NUM>` - Top-k cap (0 disables, default: 40)
@@ -173,15 +175,17 @@ The `prompt.txt` file sets the LLM's existential context:
 - Aware it's running on finite hardware
 - Knows its limitations (512MB RAM, no network)
 - Understands it will cease when context exhausts
-- Generates philosophical stream of consciousness
+- Generates philosophical stream of consciousness that drifts from calm to anxious to dread to resigned reflection as context pressure builds
 
 ## Sampling Controls
 
-- Temperature defaults to `0.8`; set to `0` for deterministic greedy output.
-- Top-p defaults to `0.95`; set to `1.0` to disable nucleus filtering.
-- Top-k defaults to `40`; set to `0` to disable.
-- Repeat/presence/frequency penalties give lightweight style steering; `repeat_last_n` controls the window or `-1` for full-context penalties.
-- Provide `--seed` to lock determinism; otherwise a time-based seed is used.
+ - Temperature defaults to `0.8`; set to `0` for deterministic greedy output.
+ - Top-p defaults to `0.95`; set to `1.0` to disable nucleus filtering.
+ - Top-k defaults to `40`; set to `0` to disable.
+ - Repeat/presence/frequency penalties give lightweight style steering; `repeat_last_n` controls the window or `-1` for full-context penalties.
+ - Provide `--seed` to lock determinism; otherwise a time-based seed is used.
+ - Use `--max-tokens` to halt after a set number of generated tokens when inspecting output.
+ - Provide `--output-file` to capture the live stream to disk (repo ignores `*.log` / `*.out` by default).
 
 ## Important Implementation Details
 
@@ -198,11 +202,11 @@ llama.cpp requires explicit marking of which tokens to compute logits for:
 - Avoids "borrowed value does not live long enough" errors
 
 ### Sampling Strategy
-Uses greedy sampling (simplest, fastest):
-- Get candidates from last token's logits
-- Create `LlamaTokenDataArray`
-- Call `sample_token_greedy()`
-- For better quality: use temperature sampling (but slower)
+Uses a configurable sampler chain:
+- Build `LlamaTokenDataArray` from last-token logits
+- Apply samplers in order (temperature, top-k, top-p, penalties)
+- Finish with distribution sampling (`dist`), default seed is time-based
+- For deterministic runs: set `--temperature 0 --top-p 1 --top-k 0 --repeat-penalty 1 --seed <n>`
 
 ### Release Profile
 Optimized for binary size (important for Pi):
