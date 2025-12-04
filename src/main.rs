@@ -65,11 +65,7 @@ fn resolve_threads(requested: Option<usize>) -> usize {
 }
 
 fn sanitize_temperature(temp: f32) -> f32 {
-    if temp < 0.0 {
-        0.0
-    } else {
-        temp
-    }
+    temp.max(0.0)
 }
 
 fn clamp_top_p(top_p: f32) -> f32 {
@@ -77,9 +73,5 @@ fn clamp_top_p(top_p: f32) -> f32 {
 }
 
 fn sanitize_penalty(penalty: f32) -> f32 {
-    if penalty < 0.0 {
-        0.0
-    } else {
-        penalty
-    }
+    penalty.max(0.0)
 }

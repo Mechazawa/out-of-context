@@ -46,10 +46,10 @@ Options:
       --max-tokens <NUM>       Optional cap on generated tokens (helpful for inspection)
       --threads <NUM>          Override thread count (default: auto-detect)
       --output-file <PATH>     Mirror output into a file (terminal always streams)
-      --temperature <NUM>      Sampling temperature (0 = greedy) [default: 0.8]
-      --top-p <NUM>            Nucleus sampling probability mass (1.0 disables) [default: 0.95]
-      --top-k <NUM>            Top-k cap (0 disables) [default: 40]
-      --repeat-penalty <NUM>   Penalize recent repeats (1.0 disables) [default: 1.1]
+      --temperature <NUM>      Sampling temperature (0 = greedy) [default: 0.6]
+      --top-p <NUM>            Nucleus sampling probability mass (1.0 disables) [default: 0.85]
+      --top-k <NUM>            Top-k cap (0 disables) [default: 30]
+      --repeat-penalty <NUM>   Penalize recent repeats (1.0 disables) [default: 1.2]
       --repeat-last-n <NUM>    Number of recent tokens to penalize [default: 64]
       --presence-penalty <NUM> Presence penalty (encourages new topics) [default: 0.0]
       --frequency-penalty <NUM> Frequency penalty (discourages repetition) [default: 0.0]
@@ -119,7 +119,7 @@ cargo build --release --target aarch64-unknown-linux-gnu
 
 2. **Generation Loop**
    - Reads system prompt from `prompt.txt`
-   - Tokenizes the prompt and processes it; generation starts immediately after the prompt with no extra headers
+   - Tokenizes the prompt and processes it; generation starts immediately after the prompt with a forced first-person "I " prefix (no headings or lists)
    - Enters infinite loop:
      - Samples next token via configured sampler chain
      - Decodes and prints token to stdout

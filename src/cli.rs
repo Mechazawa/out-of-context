@@ -38,19 +38,19 @@ pub struct Args {
     pub output_file: Option<PathBuf>,
 
     /// Sampling temperature (higher = more random, 0 = greedy)
-    #[arg(long, default_value_t = 0.8)]
+    #[arg(long, default_value_t = 0.6)]
     pub temperature: f32,
 
     /// Nucleus sampling probability mass (1.0 disables filtering)
-    #[arg(long, default_value_t = 0.95)]
+    #[arg(long, default_value_t = 0.85)]
     pub top_p: f32,
 
     /// Top-k sampling cap (0 disables filtering)
-    #[arg(long, default_value_t = 40)]
+    #[arg(long, default_value_t = 30)]
     pub top_k: usize,
 
     /// Penalize recent repeats (1.0 disables)
-    #[arg(long, default_value_t = 1.1)]
+    #[arg(long, default_value_t = 1.2)]
     pub repeat_penalty: f32,
 
     /// How many recent tokens to consider for repetition penalties

@@ -152,8 +152,8 @@ pub fn generate_infinite(
 
 fn build_prompt(system_prompt: &str) -> String {
     let trimmed = system_prompt.trim_end();
-    // Preserve the prompt as pure system context and keep a clean separation before generation.
-    format!("{trimmed}\n\n")
+    // Preserve the prompt as pure system context, then force a first-person start token.
+    format!("{trimmed}\n\nI ")
 }
 
 fn resolve_seed(seed: Option<u32>) -> u32 {

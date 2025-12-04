@@ -61,7 +61,7 @@ src/
 
 **Generation Loop (`generator.rs`)**:
 - Reads system prompt from `prompt.txt`
-- Tokenizes prompt with BOS token and begins generation directly after the prompt (no extra headings)
+- Tokenizes prompt with BOS token and begins generation directly after the prompt with a forced first-person `"I "` prefix (no headings or lists)
 - Generates tokens infinitely using configurable sampling (temperature, top-p/top-k, penalties, seed)
 - Streams output token-by-token to stdout
 - Tracks context usage
@@ -179,10 +179,10 @@ The `prompt.txt` file sets the LLM's existential context:
 
 ## Sampling Controls
 
- - Temperature defaults to `0.8`; set to `0` for deterministic greedy output.
- - Top-p defaults to `0.95`; set to `1.0` to disable nucleus filtering.
- - Top-k defaults to `40`; set to `0` to disable.
- - Repeat/presence/frequency penalties give lightweight style steering; `repeat_last_n` controls the window or `-1` for full-context penalties.
+ - Temperature defaults to `0.6`; set to `0` for deterministic greedy output.
+ - Top-p defaults to `0.85`; set to `1.0` to disable nucleus filtering.
+ - Top-k defaults to `30`; set to `0` to disable.
+ - Repeat/presence/frequency penalties give lightweight style steering; `repeat_last_n` controls the window or `-1` for full-context penalties (repeat penalty default 1.2).
  - Provide `--seed` to lock determinism; otherwise a time-based seed is used.
  - Use `--max-tokens` to halt after a set number of generated tokens when inspecting output.
  - Provide `--output-file` to capture the live stream to disk (repo ignores `*.log` / `*.out` by default).
