@@ -44,17 +44,21 @@ impl LLMSetup {
     }
 
     /// Create a context for this model
-    pub fn create_context<'a>(&'a self, context_size: usize) -> Result<LlamaContext<'a>> {
+    pub fn create_context<'a>(&'a self, context_size: usize, n_threads: usize) -> Result<LlamaContext<'a>> {
         // Configure context parameters
         let n_ctx = NonZeroU32::new(context_size as u32)
             .context("Context size must be non-zero")?;
 
+        let n_threads: i32 = n_threads
+            .try_into()
+            .context("Thread count is too large for llama.cpp")?;
+
         let context_params = LlamaContextParams::default()
             .with_n_ctx(Some(n_ctx)) // Context window size
-            .with_n_threads(4) // Pi Zero 2 W has 4 cores
-            .with_n_threads_batch(4); // Batch processing threads
+            .with_n_threads(n_threads) // Allow tuning thread count
+            .with_n_threads_batch(n_threads); // Batch processing threads
 
-        println!("Creating context with {} tokens...", context_size);
+        println!("Creating context with {} tokens ({} threads)...", context_size, n_threads);
 
         // Create context
         let context = self.model

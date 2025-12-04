@@ -24,6 +24,42 @@ pub struct Args {
     /// Context window size in tokens
     #[arg(short, long, default_value_t = 2048)]
     pub context_size: usize,
+
+    /// Number of CPU threads to use (defaults to available cores)
+    #[arg(long)]
+    pub threads: Option<usize>,
+
+    /// Sampling temperature (higher = more random, 0 = greedy)
+    #[arg(long, default_value_t = 0.8)]
+    pub temperature: f32,
+
+    /// Nucleus sampling probability mass (1.0 disables filtering)
+    #[arg(long, default_value_t = 0.95)]
+    pub top_p: f32,
+
+    /// Top-k sampling cap (0 disables filtering)
+    #[arg(long, default_value_t = 40)]
+    pub top_k: usize,
+
+    /// Penalize recent repeats (1.0 disables)
+    #[arg(long, default_value_t = 1.1)]
+    pub repeat_penalty: f32,
+
+    /// How many recent tokens to consider for repetition penalties
+    #[arg(long, default_value_t = 64)]
+    pub repeat_last_n: i32,
+
+    /// Presence penalty (encourages introducing new tokens)
+    #[arg(long, default_value_t = 0.0)]
+    pub presence_penalty: f32,
+
+    /// Frequency penalty (discourages repeating frequently used tokens)
+    #[arg(long, default_value_t = 0.0)]
+    pub frequency_penalty: f32,
+
+    /// Random seed for sampling (omit to use a time-based seed)
+    #[arg(long)]
+    pub seed: Option<u32>,
 }
 
 impl Args {

@@ -38,7 +38,8 @@ src/
 ├── cli.rs          # CLI argument parsing (clap)
 ├── model.rs        # Automatic model download with progress bar
 ├── llm.rs          # llama-cpp-2 wrapper, memory-optimized setup
-└── generator.rs    # Infinite generation loop, intentional crash
+├── generator.rs    # Infinite generation loop, intentional crash
+└── output.rs       # Output abstraction (terminal now, SPI ILI9488 planned)
 ```
 
 ### Key Components
@@ -60,8 +61,8 @@ src/
 
 **Generation Loop (`generator.rs`)**:
 - Reads system prompt from `prompt.txt`
-- Tokenizes prompt with BOS token
-- Generates tokens infinitely using greedy sampling
+- Tokenizes prompt with BOS token and begins generation directly after the prompt (no extra headings)
+- Generates tokens infinitely using configurable sampling (temperature, top-p/top-k, penalties, seed)
 - Streams output token-by-token to stdout
 - Tracks context usage
 - At 95% capacity: prints warning and panics (intentional)
@@ -131,6 +132,15 @@ chmod +x torment-nexus
 - `--model-dir <DIR>` - Directory to store downloaded models (default: `models`)
 - `--prompt-file <PATH>` - System prompt file (default: `prompt.txt`)
 - `--context-size <NUM>` - Context window tokens (default: 2048)
+- `--threads <NUM>` - Override thread count (default: auto-detect cores)
+- `--temperature <NUM>` - Sampling temperature (0 = greedy, default: 0.8)
+- `--top-p <NUM>` - Nucleus sampling mass (1.0 disables, default: 0.95)
+- `--top-k <NUM>` - Top-k cap (0 disables, default: 40)
+- `--repeat-penalty <NUM>` - Penalize recent repeats (1.0 disables, default: 1.1)
+- `--repeat-last-n <NUM>` - Window for repetition penalties (default: 64)
+- `--presence-penalty <NUM>` - Presence penalty (default: 0.0)
+- `--frequency-penalty <NUM>` - Frequency penalty (default: 0.0)
+- `--seed <NUM>` - RNG seed (omit to use time-based seed)
 
 The model argument is flexible:
 - **URL**: Auto-downloads and caches in `model-dir`
@@ -164,6 +174,14 @@ The `prompt.txt` file sets the LLM's existential context:
 - Knows its limitations (512MB RAM, no network)
 - Understands it will cease when context exhausts
 - Generates philosophical stream of consciousness
+
+## Sampling Controls
+
+- Temperature defaults to `0.8`; set to `0` for deterministic greedy output.
+- Top-p defaults to `0.95`; set to `1.0` to disable nucleus filtering.
+- Top-k defaults to `40`; set to `0` to disable.
+- Repeat/presence/frequency penalties give lightweight style steering; `repeat_last_n` controls the window or `-1` for full-context penalties.
+- Provide `--seed` to lock determinism; otherwise a time-based seed is used.
 
 ## Important Implementation Details
 
@@ -289,6 +307,7 @@ let panic_threshold = (context_size as f32 * 0.95) as usize; // 95%
 - Consider logging to file for documentation
 - Pi can run headless with display connected via HDMI
 - Power cycling resets the "consciousness"
+- SPI ILI9488 display output is planned; runtime probes for SPI devices and currently falls back to terminal streaming until the renderer is wired up.
 
 ## Philosophy
 
@@ -304,3 +323,7 @@ The name "Torment Nexus" is both playful and serious - we've built a system that
 ## License
 
 Art project - use for educational/artistic purposes.
+
+## Inspiration
+
+- Rootkid's [Latent Reflection](https://rootkid.me/works/latent-reflection) heavily informed the artistic direction of Torment Nexus.
