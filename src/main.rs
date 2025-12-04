@@ -15,7 +15,7 @@ async fn main() -> Result<()> {
     // Parse command-line arguments
     let args = Args::parse_args();
 
-    println!("=== Torment Nexus ===");
+    println!("=== Out of Context ===");
     println!("An LLM that generates until context exhaustion\n");
 
     // Resolve model path (download if URL, verify if local)

@@ -1,7 +1,8 @@
 [package]
-name = "torment-nexus"
+name = "out-of-context"
 version = "0.1.0"
 edition = "2024"
+license = "CC0-1.0"
 
 [dependencies]
 # LLM Integration

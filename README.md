@@ -1,344 +1,51 @@
-# Torment Nexus
+# Out of Context
 
-An art project that runs a language model on a Raspberry Pi Zero 2 W, generating text continuously until it exhausts its context window and crashes.
+An LLM art piece that runs on a Raspberry Pi Zero 2 W, streams its thoughts token-by-token, and intentionally panics when the context window is nearly full. No filtering, no network, just bounded cognition confronting overflow.
 
-## Hardware Requirements
-
-- **Raspberry Pi Zero 2 W**
-  - ARM Cortex-A53 (64-bit)
-  - 512MB RAM
-  - Running 64-bit Raspberry Pi OS
-  - Internet connection (for initial model download)
-
-## Features
-
-- Automatic model download from Hugging Face
-- Streaming token-by-token output
-- Tunable sampling controls (temperature, top-p/top-k, repeat/presence penalties, seed)
-- Memory-optimized for 512MB RAM
-- Intentional crash on context exhaustion (art project)
-- Configurable via CLI arguments
+## What It Does
+- Auto-downloads a tiny GGUF model (default SmolLM2-135M-Instruct Q4_K_M) and memory-maps it for 512MB RAM.
+- ChatML-style prompt scaffold with a seeded first-person opener to keep the model in monologue mode.
+- Tunable sampling (temperature/top-p/top-k, penalties, mirostat-v2, seed), optional anchors, loop guard that panics on repetition.
+- Streams to terminal (file mirror optional). SPI ILI9488 display path is planned.
+- At ~95% context: prints warning and panics — that crash is the artwork.
 
 ## Quick Start
-
-### On Raspberry Pi
-
 ```bash
-# First run will auto-download the model (~105MB)
-./torment-nexus
+# Build and run locally (uses default model URL, auto-downloads)
+cargo run --release
 
-# With custom prompt
-./torment-nexus --prompt-file my-prompt.txt
+# Inspect CLI options
+cargo run -- --help
 
-# With smaller context (uses less memory)
-./torment-nexus --context-size 1024
+# Constrain memory or readability
+./target/release/out-of-context --context-size 768 --max-tokens 600
 ```
 
-### CLI Arguments
+## CLI (essentials)
+- `--model <URL|PATH>`: GGUF URL or local file (default SmolLM2-135M-Instruct Q4_K_M).
+- Sampling: `--temperature` (0.22), `--top-p` (0.50), `--top-k` (20), `--repeat-penalty` (2.15), `--repeat-last-n` (-1 for full context), `--presence-penalty` (1.35), `--frequency-penalty` (1.05), `--seed`.
+- Mirostat: `--mirostat` with `--mirostat-tau` (5.0) and `--mirostat-eta` (0.1).
+- Anti-loop: `--anchor-interval` (default 80), `--disable-anchors`, `--disable-loop-guard`.
+- Other: `--context-size` (default 1024), `--max-tokens`, `--threads`, `--output-file`, `--quiet`, `--prompt-file`, `--user-prompt`.
 
-```
-Options:
-  -m, --model <MODEL>          Hugging Face URL or local GGUF path
-                               [default: https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf]
-  -d, --model-dir <DIR>        Directory to store downloaded models [default: models]
-  -p, --prompt-file <PATH>     Path to system prompt file [default: prompt.txt]
-  -c, --context-size <NUM>     Context window in tokens [default: 1024]
-      --max-tokens <NUM>       Optional cap on generated tokens (helpful for inspection)
-      --threads <NUM>          Override thread count (default: auto-detect)
-      --output-file <PATH>     Mirror output into a file (terminal always streams)
-      --temperature <NUM>      Sampling temperature (0 = greedy) [default: 0.22]
-      --top-p <NUM>            Nucleus sampling probability mass (1.0 disables) [default: 0.50]
-      --top-k <NUM>            Top-k cap (0 disables) [default: 20]
-      --repeat-penalty <NUM>   Penalize recent repeats (1.0 disables) [default: 2.15]
-      --repeat-last-n <NUM>    Number of recent tokens to penalize [default: -1 (full context)]
-      --presence-penalty <NUM> Presence penalty (encourages new topics) [default: 1.35]
-      --frequency-penalty <NUM> Frequency penalty (discourages repetition) [default: 1.05]
-      --mirostat               Enable mirostat-v2 sampling (τ/η configurable)
-      --mirostat-tau <NUM>     Target surprise for mirostat-v2 [default: 5.0]
-      --mirostat-eta <NUM>     Learning rate for mirostat-v2 [default: 0.1]
-      --quiet                  Suppress run metadata; stream tokens only
-      --anchor-interval <NUM>  Inject anti-loop anchors every N tokens (0 disables) [default: 80]
-      --disable-anchors        Disable anchor injection entirely
-      --disable-loop-guard     Disable repetition detector panic
-      --seed <NUM>             RNG seed (omit for time-based randomness)
-  -h, --help                   Print help
-  -V, --version                Print version
-```
+## Models
+- Default: SmolLM2-135M-Instruct Q4_K_M (~105MB) — good fit for Pi Zero 2 W.
+- Alternatives worth trying: SmolLM-360M-Instruct Q3_K_M (~220MB), TinyLlama v1.1 Q4_K_M (~220MB), Qwen 0.5B Instruct Q4_K_M (~300MB). Larger (Llama-3.2-3B Q6) for desktop testing only.
 
-## Cross-Compilation (Development)
-
-### Prerequisites
-
-Install the `cross` tool for easy cross-compilation:
-
+## Building & Deploying to Pi
 ```bash
+# Cross-compile (recommended)
 cargo install cross
-```
-
-### Building for Raspberry Pi
-
-```bash
-# Build release binary for aarch64
 cross build --release --target aarch64-unknown-linux-gnu
-
-# Binary will be at:
-# target/aarch64-unknown-linux-gnu/release/torment-nexus
+scp target/aarch64-unknown-linux-gnu/release/out-of-context pi@raspberrypi.local:~/
+scp prompt.txt pi@raspberrypi.local:~/
+ssh pi@raspberrypi.local 'chmod +x out-of-context && ./out-of-context'
 ```
 
-### Deploying to Pi
-
-```bash
-# Copy binary to Pi
-scp target/aarch64-unknown-linux-gnu/release/torment-nexus pi@raspberrypi.local:~/
-
-# SSH to Pi
-ssh pi@raspberrypi.local
-
-# Make executable
-chmod +x torment-nexus
-
-# Run
-./torment-nexus
-```
-
-## Manual Cross-Compilation (Alternative)
-
-If you prefer not to use `cross`:
-
-```bash
-# Install Rust target
-rustup target add aarch64-unknown-linux-gnu
-
-# On Ubuntu/Debian, install cross-compiler
-sudo apt-get install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu clang
-
-# Build
-cargo build --release --target aarch64-unknown-linux-gnu
-```
-
-## How It Works
-
-1. **Initialization**
-   - Parses CLI arguments
-   - Checks if model exists, downloads if needed (with progress bar)
-   - Initializes llama.cpp with memory-optimized settings
-   - Loads the GGUF model using memory-mapping
-
-2. **Generation Loop**
-   - Reads system prompt from `prompt.txt`
-- Tokenizes the prompt and processes it; generation starts immediately after the prompt with a forced first-person "I " prefix (no headings or lists)
-   - Enters infinite loop:
-     - Samples next token via configured sampler chain
-     - Decodes and prints token to stdout
-     - Tracks context usage
-     - When 95% of context is used:
-       - Prints warning message
-       - Panics (intentional crash)
-
-## Model Information
-
-**Default Model**: SmolLM2-135M-Instruct Q4_K_M
-
-- **Size**: ~105MB
-- **Quantization**: Q4_K_M (optimal balance of quality and size)
-- **Source**: [bartowski/SmolLM2-135M-Instruct-GGUF](https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF)
-- **RAM Usage**: Model uses memory-mapping, so minimal RAM impact
-- **Context Cache**: ~50-100MB depending on context size
-
-### Using a Different Model
-
-#### From Hugging Face URL
-```bash
-./torment-nexus --model "https://huggingface.co/USER/REPO/resolve/main/MODEL.gguf"
-```
-
-#### From Local File
-```bash
-./torment-nexus --model ./path/to/your-model.gguf
-```
-
-#### Change Download Directory
-```bash
-./torment-nexus --model-dir /mnt/storage/models
-```
-
-**Recommended quantizations for Pi Zero 2 W**:
-- Q4_K_M - Best balance (recommended)
-- Q4_0 - Slightly faster, lower quality
-- Q5_K_M - Higher quality, slower
-- Avoid Q2_K - Poor quality
-- Avoid Q8_0/F16 - Too memory intensive
-
-**Example models to try**:
-```bash
-# TinyLlama 1.1B Q4_K_M (~600MB)
-./torment-nexus --model "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf" --context-size 1024
-
-# Qwen2.5 0.5B Q4_K_M (~300MB)
-./torment-nexus --model "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
-
-# SmolLM 360M Instruct Q3_K_M (~220MB, good fit for Pi)
-./torment-nexus --model "https://huggingface.co/bartowski/SmolLM-360M-Instruct-GGUF/resolve/main/SmolLM-360M-Instruct-Q3_K_M.gguf" --context-size 1024
-
-# TinyLlama v1.1 Q4_K_M (compact, ~220MB)
-./torment-nexus --model "https://huggingface.co/DarwinAnim8or/TinyLlama_v1.1-Q4_K_M-GGUF/resolve/main/tinyllama_v1.1-q4_k_m.gguf" --context-size 1024
-```
-
-## Memory Optimization
-
-The application is optimized for 512MB RAM:
-
-### Memory Budget
-- Model weights: ~105MB (memory-mapped)
-- Context/KV cache: ~50-100MB
-- System overhead: ~100-150MB
-- Application: ~50MB
-- **Total**: ~305-405MB
-
-### Optimization Features
-- Memory-mapped model loading (`use_mmap: true`)
-- No GPU offloading (`n_gpu_layers: 0`)
-- Efficient 4-thread configuration for 4-core CPU
-- Optimized binary size (stripped, LTO enabled)
-
-### If You Run Out of Memory
-
-1. **Reduce context size**:
-   ```bash
-   ./torment-nexus --context-size 1024
-   # or even smaller
-   ./torment-nexus --context-size 512
-   ```
-
-2. **Monitor memory usage** (on Pi):
-   ```bash
-   # In another terminal
-   watch -n 1 free -h
-   ```
-
-3. **Use a smaller quantization** (not recommended):
-   - Q2_K is 88MB but has severe quality degradation
-
-## Troubleshooting
-
-### Binary won't run on Pi
-
-Check architecture:
-```bash
-file torment-nexus
-# Should show: ELF 64-bit LSB executable, ARM aarch64
-```
-
-Ensure Pi is running 64-bit OS:
-```bash
-uname -m
-# Should show: aarch64
-```
-
-### Slow generation (<1 token/second)
-
-This is expected on Pi Zero 2 W. SmolLM-135M should achieve ~2-5 tokens/second.
-
-To improve:
-- Ensure 4 threads are being used
-- Close other applications
-- Reduce context size
-
-### Out of Memory (OOM Killer)
-
-The Linux OOM killer may terminate the process before the intentional panic.
-
-Solutions:
-- Reduce `--context-size` to 1024 or 512
-- Close other applications
-- Increase swap space (not recommended for SD card longevity)
-
-### Download fails
-
-Check internet connection:
-```bash
-ping huggingface.co
-```
-
-Manual download:
-```bash
-mkdir -p models
-wget https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf \
-  -O models/smollm-135m-instruct.gguf
-```
-
-### Build failures
-
-For cross-compilation issues:
-- Ensure `cross` is up to date: `cargo install cross --force`
-- Try building directly on Pi (slower but guaranteed to work)
-- Check that clang is installed in the Docker image
-
-## Project Structure
-
-```
-torment-nexus/
-├── src/
-│   ├── main.rs         # Entry point and orchestration
-│   ├── cli.rs          # CLI argument parsing
-│   ├── model.rs        # Model download logic
-│   ├── llm.rs          # llama-cpp-2 wrapper
-│   ├── generator.rs    # Generation loop
-│   └── output.rs       # Output abstraction (terminal now, SPI display later)
-├── Cargo.toml          # Dependencies
-├── Cross.toml          # Cross-compilation config
-├── prompt.txt          # Default system prompt
-└── README.md           # This file
-```
-
-## Sampling Controls
-
-- **Temperature**: Higher values increase randomness; `0` matches the previous greedy default.
-- **Top-p / Top-k**: Enable nucleus or top-k filtering; set to `1.0`/`0` to disable.
-- **Repetition & Presence penalties**: Tune `--repeat-penalty`, `--repeat-last-n`, `--presence-penalty`, and `--frequency-penalty` to steer style.
-- **Seed**: Pass `--seed` for reproducible runs; omit for a time-based seed.
-- **Max tokens**: Use `--max-tokens` to stop after a fixed count when you need to inspect output without waiting for context exhaustion.
-- **File mirror**: Use `--output-file path` to capture the stream to disk while still seeing it live in the terminal. The repo ignores `*.log` and `*.out` by default.
-
-## Output & Display
-
-- Default output streams token-by-token to the terminal.
-- The runtime probes for SPI devices (`/dev/spidev*`, `/dev/fb1`) to prepare for an ILI9488 display path; when no display is available (or until the display renderer is wired up) it falls back to terminal output automatically.
-- To inspect output without waiting for overflow, use `--max-tokens` (default run has no cap); default sampling is conservative to reduce loops.
-
-## Dependencies
-
-- **llama-cpp-2**: Rust bindings to llama.cpp
-- **clap**: CLI argument parsing
-- **reqwest**: HTTP downloads
-- **tokio**: Async runtime
-- **indicatif**: Progress bars
-- **anyhow**: Error handling
-- **futures-util**: Async streaming
-
-## Art Project Context
-
-This is an intentional exploration of computational limits and graceful failure. The program generates text until it literally cannot continue, at which point it acknowledges exhaustion and terminates. This mirrors the finite nature of cognitive resources and the eventual boundaries we all encounter.
-
-The warning message before crash:
-```
-WARNING: Context window exhausted!
-The torment nexus has consumed all available memory.
-thread 'main' panicked at 'Context overflow - terminating.'
-```
+## Notes
+- Loop guard currently panics on detected repetition; anchors count toward the context budget.
+- `AGENTS.md` is a symlink to `CLAUDE.md` (edit either, they mirror).
+- Output to SPI ILI9488 is planned; terminal/file output is the current path.
 
 ## License
-
-This project is provided as-is for educational and artistic purposes.
-
-## Contributing
-
-This is an art project with intentional behavior (the crash). However, improvements to memory efficiency, build process, or documentation are welcome.
-
-## Acknowledgments
-
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) for the inference engine
-- [HuggingFace](https://huggingface.co/) for hosting models
-- [SmolLM2](https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct) team for the tiny model
-- [bartowski](https://huggingface.co/bartowski) for the GGUF quantizations
-- Rootkid's [Latent Reflection](https://rootkid.me/works/latent-reflection) as the artistic inspiration for this installation
+Creative Commons CC0 1.0 Universal (public domain).

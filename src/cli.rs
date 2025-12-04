@@ -1,7 +1,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 
-/// Torment Nexus - An LLM text generator that runs until context exhaustion
+/// Out of Context - An LLM text generator that runs until context exhaustion
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {

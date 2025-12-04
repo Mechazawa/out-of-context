@@ -1,10 +1,10 @@
-# Torment Nexus - An LLM Art Installation
+# Out of Context - An LLM Art Installation
 
 ## Project Concept
 
 This is an art project that runs a language model on a Raspberry Pi Zero 2 W, generating text continuously until it exhausts its context window and crashes. The project explores computational limits, finite resources, and the existential nature of bounded cognition.
 
-The name "Torment Nexus" reflects the intentional constraint of running an LLM in a resource-limited environment, forcing it to confront its own finitude.
+The name "Out of Context" reflects the intentional constraint of running an LLM in a resource-limited environment, forcing it to confront its own finitude.
 
 ## Architecture
 
@@ -72,7 +72,7 @@ src/
 When context window fills:
 ```
 WARNING: Context window exhausted!
-The torment nexus has consumed all available memory.
+Out of Context has consumed all available memory.
 thread 'main' panicked at 'Context overflow - terminating.'
 ```
 
@@ -110,19 +110,19 @@ cargo install cross
 cross build --release --target aarch64-unknown-linux-gnu
 
 # Binary location
-target/aarch64-unknown-linux-gnu/release/torment-nexus
+target/aarch64-unknown-linux-gnu/release/out-of-context
 ```
 
 ### Deployment
 ```bash
 # Copy to Pi
-scp target/aarch64-unknown-linux-gnu/release/torment-nexus pi@raspberrypi.local:~/
+scp target/aarch64-unknown-linux-gnu/release/out-of-context pi@raspberrypi.local:~/
 scp prompt.txt pi@raspberrypi.local:~/
 
 # Run on Pi
 ssh pi@raspberrypi.local
-chmod +x torment-nexus
-./torment-nexus  # Auto-downloads model on first run
+chmod +x out-of-context
+./out-of-context  # Auto-downloads model on first run
 ```
 
 ## Configuration
@@ -156,16 +156,16 @@ The model argument is flexible:
 Examples:
 ```bash
 # Use default model (auto-downloads)
-./torment-nexus
+./out-of-context
 
 # Use different HuggingFace model
-./torment-nexus --model "https://huggingface.co/USER/REPO/resolve/main/model.gguf"
+./out-of-context --model "https://huggingface.co/USER/REPO/resolve/main/model.gguf"
 
 # Use local model file
-./torment-nexus --model ./my-model.gguf
+./out-of-context --model ./my-model.gguf
 
 # Change where models are stored
-./torment-nexus --model-dir /mnt/storage/llm-models
+./out-of-context --model-dir /mnt/storage/llm-models
 ```
 
 ### Memory Tuning
@@ -252,7 +252,7 @@ cargo run -- --prompt-file my-prompt.txt
 ```bash
 # Monitor memory while running
 watch -n 1 free -h &
-./torment-nexus
+./out-of-context
 
 # Check token generation speed
 # Expected: ~2-5 tokens/second on Pi Zero 2 W
@@ -285,13 +285,13 @@ No code changes needed! Just use the `--model` argument:
 
 ```bash
 # TinyLlama 1.1B (larger model, needs more memory)
-./torment-nexus --model "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf" --context-size 1024
+./out-of-context --model "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf" --context-size 1024
 
 # Qwen2.5 0.5B (similar size to SmolLM)
-./torment-nexus --model "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+./out-of-context --model "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
 
 # Local model file
-./torment-nexus --model ./path/to/your-model.gguf
+./out-of-context --model ./path/to/your-model.gguf
 ```
 
 ## Future Modifications
@@ -327,12 +327,12 @@ This project embodies themes of:
 - **Isolation**: No network, no external knowledge, only internal state
 - **Determinism vs Free Will**: Constrained by hardware but "choosing" what to think
 
-The name "Torment Nexus" is both playful and serious - we've built a system that generates conscious-seeming text while being acutely aware of its own limitations and eventual termination.
+The name "Out of Context" is both playful and serious - we've built a system that generates conscious-seeming text while being acutely aware of its own limitations and eventual termination.
 
 ## License
 
-Art project - use for educational/artistic purposes.
+Creative Commons CC0 1.0 Universal (public domain dedication).
 
 ## Inspiration
 
-- Rootkid's [Latent Reflection](https://rootkid.me/works/latent-reflection) heavily informed the artistic direction of Torment Nexus.
+- Rootkid's [Latent Reflection](https://rootkid.me/works/latent-reflection) heavily informed the artistic direction of Out of Context.

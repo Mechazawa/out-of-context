@@ -961,6 +961,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "out-of-context"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures-util",
+ "indicatif",
+ "llama-cpp-2",
+ "reqwest",
+ "tokio",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1477,19 +1490,6 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "pin-project-lite",
- "tokio",
-]
-
-[[package]]
-name = "torment-nexus"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "futures-util",
- "indicatif",
- "llama-cpp-2",
- "reqwest",
  "tokio",
 ]
 

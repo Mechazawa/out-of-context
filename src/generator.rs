@@ -145,7 +145,7 @@ pub fn generate_infinite(
         // Check if we're approaching context exhaustion
         if tokens_used >= panic_threshold {
             eprintln!("\n\nWARNING: Context window exhausted!");
-            eprintln!("The torment nexus has consumed all available memory.");
+            eprintln!("Out of Context has consumed all available memory.");
             panic!("Context overflow - terminating.");
         }
 
