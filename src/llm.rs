@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
+use llama_cpp_2::context::LlamaContext;
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel, Special};
-use llama_cpp_2::context::LlamaContext;
 use llama_cpp_2::token::LlamaToken;
 use std::num::NonZeroU32;
 use std::path::Path;
@@ -23,8 +23,7 @@ impl LLMSetup {
         println!("Initializing llama.cpp backend...");
 
         // Initialize backend (this must be done first)
-        let backend = LlamaBackend::init()
-            .context("Failed to initialize llama.cpp backend")?;
+        let backend = LlamaBackend::init().context("Failed to initialize llama.cpp backend")?;
 
         // Configure model parameters for memory efficiency
         // Note: mmap is enabled by default in llama.cpp
@@ -44,10 +43,14 @@ impl LLMSetup {
     }
 
     /// Create a context for this model
-    pub fn create_context<'a>(&'a self, context_size: usize, n_threads: usize) -> Result<LlamaContext<'a>> {
+    pub fn create_context<'a>(
+        &'a self,
+        context_size: usize,
+        n_threads: usize,
+    ) -> Result<LlamaContext<'a>> {
         // Configure context parameters
-        let n_ctx = NonZeroU32::new(context_size as u32)
-            .context("Context size must be non-zero")?;
+        let n_ctx =
+            NonZeroU32::new(context_size as u32).context("Context size must be non-zero")?;
 
         let n_threads: i32 = n_threads
             .try_into()
@@ -58,10 +61,14 @@ impl LLMSetup {
             .with_n_threads(n_threads) // Allow tuning thread count
             .with_n_threads_batch(n_threads); // Batch processing threads
 
-        println!("Creating context with {} tokens ({} threads)...", context_size, n_threads);
+        println!(
+            "Creating context with {} tokens ({} threads)...",
+            context_size, n_threads
+        );
 
         // Create context
-        let context = self.model
+        let context = self
+            .model
             .new_context(&self.backend, context_params)
             .context("Failed to create context")?;
 
@@ -72,7 +79,11 @@ impl LLMSetup {
 
     /// Tokenize text into tokens
     pub fn tokenize(&self, text: &str, add_bos: bool) -> Result<Vec<LlamaToken>> {
-        let add_bos = if add_bos { AddBos::Always } else { AddBos::Never };
+        let add_bos = if add_bos {
+            AddBos::Always
+        } else {
+            AddBos::Never
+        };
         self.model
             .str_to_token(text, add_bos)
             .context("Failed to tokenize text")
@@ -83,6 +94,11 @@ impl LLMSetup {
         self.model
             .token_to_str(token, Special::Plaintext)
             .context("Failed to decode token")
+    }
+
+    pub fn vocab_size(&self) -> Result<i32> {
+        let size = self.model.n_vocab();
+        size.try_into().context("Vocabulary size exceeds i32::MAX")
     }
 }
 

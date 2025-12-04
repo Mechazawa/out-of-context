@@ -79,7 +79,10 @@ async fn download_model(url: &str, destination: &Path) -> Result<()> {
             .unwrap()
             .progress_chars("#>-"),
     );
-    pb.set_message(format!("Downloading {}", destination.file_name().unwrap().to_string_lossy()));
+    pb.set_message(format!(
+        "Downloading {}",
+        destination.file_name().unwrap().to_string_lossy()
+    ));
 
     // Create output file
     let mut file = File::create(destination)
@@ -91,15 +94,17 @@ async fn download_model(url: &str, destination: &Path) -> Result<()> {
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.context("Failed to read chunk")?;
-        file.write_all(&chunk)
-            .context("Failed to write to file")?;
+        file.write_all(&chunk).context("Failed to write to file")?;
 
         let new = min(downloaded + (chunk.len() as u64), total_size);
         downloaded = new;
         pb.set_position(new);
     }
 
-    pb.finish_with_message(format!("Downloaded {}", destination.file_name().unwrap().to_string_lossy()));
+    pb.finish_with_message(format!(
+        "Downloaded {}",
+        destination.file_name().unwrap().to_string_lossy()
+    ));
     println!("Model downloaded successfully!");
 
     Ok(())

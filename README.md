@@ -39,20 +39,27 @@ An art project that runs a language model on a Raspberry Pi Zero 2 W, generating
 ```
 Options:
   -m, --model <MODEL>          Hugging Face URL or local GGUF path
-                               [default: https://huggingface.co/bartowski/SmolLM-360M-Instruct-GGUF/resolve/main/SmolLM-360M-Instruct-Q3_K_M.gguf]
+                               [default: https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf]
   -d, --model-dir <DIR>        Directory to store downloaded models [default: models]
   -p, --prompt-file <PATH>     Path to system prompt file [default: prompt.txt]
   -c, --context-size <NUM>     Context window in tokens [default: 1024]
       --max-tokens <NUM>       Optional cap on generated tokens (helpful for inspection)
       --threads <NUM>          Override thread count (default: auto-detect)
       --output-file <PATH>     Mirror output into a file (terminal always streams)
-      --temperature <NUM>      Sampling temperature (0 = greedy) [default: 0.55]
-      --top-p <NUM>            Nucleus sampling probability mass (1.0 disables) [default: 0.8]
-      --top-k <NUM>            Top-k cap (0 disables) [default: 25]
-      --repeat-penalty <NUM>   Penalize recent repeats (1.0 disables) [default: 1.3]
-      --repeat-last-n <NUM>    Number of recent tokens to penalize [default: 128]
-      --presence-penalty <NUM> Presence penalty (encourages new topics) [default: 0.6]
-      --frequency-penalty <NUM> Frequency penalty (discourages repetition) [default: 0.3]
+      --temperature <NUM>      Sampling temperature (0 = greedy) [default: 0.22]
+      --top-p <NUM>            Nucleus sampling probability mass (1.0 disables) [default: 0.50]
+      --top-k <NUM>            Top-k cap (0 disables) [default: 20]
+      --repeat-penalty <NUM>   Penalize recent repeats (1.0 disables) [default: 2.15]
+      --repeat-last-n <NUM>    Number of recent tokens to penalize [default: -1 (full context)]
+      --presence-penalty <NUM> Presence penalty (encourages new topics) [default: 1.35]
+      --frequency-penalty <NUM> Frequency penalty (discourages repetition) [default: 1.05]
+      --mirostat               Enable mirostat-v2 sampling (τ/η configurable)
+      --mirostat-tau <NUM>     Target surprise for mirostat-v2 [default: 5.0]
+      --mirostat-eta <NUM>     Learning rate for mirostat-v2 [default: 0.1]
+      --quiet                  Suppress run metadata; stream tokens only
+      --anchor-interval <NUM>  Inject anti-loop anchors every N tokens (0 disables) [default: 80]
+      --disable-anchors        Disable anchor injection entirely
+      --disable-loop-guard     Disable repetition detector panic
       --seed <NUM>             RNG seed (omit for time-based randomness)
   -h, --help                   Print help
   -V, --version                Print version

@@ -1,6 +1,6 @@
 use anyhow::Result;
-use std::io::{self, Write};
 use std::fs::{File, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 /// Output abstraction so we can swap terminal printing for a hardware display later.
@@ -14,7 +14,9 @@ impl OutputTarget {
     /// but we probe for SPI devices so we can hook up the ILI9488 path later.
     pub fn autodetect(mirror_file: Option<&PathBuf>) -> Result<Self> {
         if has_spi_device() {
-            eprintln!("SPI device detected; ILI9488 rendering not wired yet, using terminal output.");
+            eprintln!(
+                "SPI device detected; ILI9488 rendering not wired yet, using terminal output."
+            );
         }
 
         let file = if let Some(path) = mirror_file {

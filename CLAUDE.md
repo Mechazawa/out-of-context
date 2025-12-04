@@ -60,9 +60,9 @@ src/
 - Separates `LLMSetup` and `LlamaContext` to avoid self-referential lifetimes
 
 **Generation Loop (`generator.rs`)**:
-- Reads system prompt from `prompt.txt`
-- Tokenizes prompt with BOS token and begins generation directly after the prompt with a forced first-person `"I "` prefix (no headings, lists, or dialogue)
-- Generates tokens infinitely using configurable sampling (temperature, top-p/top-k, penalties, seed)
+- Reads system prompt from `prompt.txt` and wraps it in a ChatML-style system/user/assistant template with a seeded first-person opener (no dialogue simulation)
+- Supports mirostat-v2, temperature/top-p/top-k, presence/frequency/repetition penalties, and RNG seeds
+- Optional anchors every N tokens to disrupt looping; loop guard panics on detected repetition (override with `--disable-loop-guard`)
 - Streams output token-by-token to stdout
 - Tracks context usage
 - At 95% capacity: prints warning and panics (intentional)
@@ -128,20 +128,25 @@ chmod +x torment-nexus
 ## Configuration
 
 ### CLI Arguments
-- `--model <MODEL>` - Hugging Face URL or local GGUF path (default: SmolLM-360M-Instruct Q3_K_M URL)
+- `--model <MODEL>` - Hugging Face URL or local GGUF path (default: SmolLM2-135M-Instruct Q4_K_M URL)
 - `--model-dir <DIR>` - Directory to store downloaded models (default: `models`)
 - `--prompt-file <PATH>` - System prompt file (default: `prompt.txt`)
 - `--context-size <NUM>` - Context window tokens (default: 1024)
 - `--max-tokens <NUM>` - Optional cap on generated tokens for readability
 - `--threads <NUM>` - Override thread count (default: auto-detect cores)
 - `--output-file <PATH>` - Mirror output into a file (terminal always streams)
-- `--temperature <NUM>` - Sampling temperature (0 = greedy, default: 0.55)
-- `--top-p <NUM>` - Nucleus sampling mass (1.0 disables, default: 0.8)
-- `--top-k <NUM>` - Top-k cap (0 disables, default: 25)
-- `--repeat-penalty <NUM>` - Penalize recent repeats (1.0 disables, default: 1.3)
-- `--repeat-last-n <NUM>` - Window for repetition penalties (default: 128)
-- `--presence-penalty <NUM>` - Presence penalty (default: 0.6)
-- `--frequency-penalty <NUM>` - Frequency penalty (default: 0.3)
+- `--temperature <NUM>` - Sampling temperature (0 = greedy, default: 0.22)
+- `--top-p <NUM>` - Nucleus sampling mass (1.0 disables, default: 0.50)
+- `--top-k <NUM>` - Top-k cap (0 disables, default: 20)
+- `--repeat-penalty <NUM>` - Penalize recent repeats (1.0 disables, default: 2.15)
+- `--repeat-last-n <NUM>` - Window for repetition penalties (default: -1 for full context)
+- `--presence-penalty <NUM>` - Presence penalty (default: 1.35)
+- `--frequency-penalty <NUM>` - Frequency penalty (default: 1.05)
+- `--mirostat` / `--mirostat-tau` / `--mirostat-eta` - Enable and tune mirostat-v2 sampling
+- `--quiet` - Suppress run metadata
+- `--anchor-interval <NUM>` - Inject anti-loop anchors every N tokens (0 disables, default: 80)
+- `--disable-anchors` - Turn off anchors
+- `--disable-loop-guard` - Turn off repetition panic
 - `--seed <NUM>` - RNG seed (omit to use time-based seed)
 
 The model argument is flexible:
@@ -179,10 +184,10 @@ The `prompt.txt` file sets the LLM's existential context:
 
 ## Sampling Controls
 
- - Temperature defaults to `0.55`; set to `0` for deterministic greedy output.
- - Top-p defaults to `0.8`; set to `1.0` to disable nucleus filtering.
- - Top-k defaults to `25`; set to `0` to disable.
- - Repeat/presence/frequency penalties give lightweight style steering; `repeat_last_n` controls the window or `-1` for full-context penalties (repeat penalty default 1.3).
+ - Temperature defaults to `0.22`; set to `0` for deterministic greedy output.
+ - Top-p defaults to `0.50`; set to `1.0` to disable nucleus filtering.
+ - Top-k defaults to `20`; set to `0` to disable.
+ - Repeat/presence/frequency penalties give stronger anti-looping; `repeat_last_n` controls the window or `-1` for full-context penalties (repeat penalty default 2.15).
  - Provide `--seed` to lock determinism; otherwise a time-based seed is used.
  - Use `--max-tokens` to halt after a set number of generated tokens when inspecting output.
  - Provide `--output-file` to capture the live stream to disk (repo ignores `*.log` / `*.out` by default).
@@ -204,8 +209,8 @@ llama.cpp requires explicit marking of which tokens to compute logits for:
 ### Sampling Strategy
 Uses a configurable sampler chain:
 - Build `LlamaTokenDataArray` from last-token logits
-- Apply samplers in order (temperature, top-k, top-p, penalties)
-- Finish with distribution sampling (`dist`), default seed is time-based
+- Apply samplers in order (temperature, top-k, top-p, penalties, logit bias)
+- Finish with distribution sampling (`dist`) or `mirostat-v2`, default seed is time-based
 - For deterministic runs: set `--temperature 0 --top-p 1 --top-k 0 --repeat-penalty 1 --seed <n>`
 
 ### Release Profile

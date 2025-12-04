@@ -6,7 +6,7 @@ mod output;
 
 use anyhow::Result;
 use cli::Args;
-use generator::SamplingConfig;
+use generator::{GenerationConfig, SamplingConfig};
 use output::OutputTarget;
 use std::thread;
 
@@ -35,6 +35,22 @@ async fn main() -> Result<()> {
         presence_penalty: args.presence_penalty,
         frequency_penalty: args.frequency_penalty,
         seed: args.seed,
+        mirostat: args.mirostat,
+        mirostat_tau: args.mirostat_tau,
+        mirostat_eta: args.mirostat_eta,
+    };
+
+    let run_cfg = GenerationConfig {
+        context_size: args.context_size,
+        max_tokens: args.max_tokens,
+        anchor_interval: if args.disable_anchors || args.anchor_interval == 0 {
+            None
+        } else {
+            Some(args.anchor_interval)
+        },
+        loop_guard: !args.disable_loop_guard,
+        quiet: args.quiet,
+        user_prompt: args.user_prompt.clone(),
     };
 
     let mut output = OutputTarget::autodetect(args.output_file.as_ref())?;
@@ -47,8 +63,7 @@ async fn main() -> Result<()> {
         &llm_setup,
         &mut context,
         &args.prompt_file,
-        args.context_size,
-        args.max_tokens,
+        &run_cfg,
         sampling,
         &mut output,
     )?;
