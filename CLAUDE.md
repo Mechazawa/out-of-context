@@ -135,13 +135,13 @@ chmod +x torment-nexus
 - `--max-tokens <NUM>` - Optional cap on generated tokens for readability
 - `--threads <NUM>` - Override thread count (default: auto-detect cores)
 - `--output-file <PATH>` - Mirror output into a file (terminal always streams)
-- `--temperature <NUM>` - Sampling temperature (0 = greedy, default: 0.8)
-- `--top-p <NUM>` - Nucleus sampling mass (1.0 disables, default: 0.95)
-- `--top-k <NUM>` - Top-k cap (0 disables, default: 40)
-- `--repeat-penalty <NUM>` - Penalize recent repeats (1.0 disables, default: 1.1)
-- `--repeat-last-n <NUM>` - Window for repetition penalties (default: 64)
-- `--presence-penalty <NUM>` - Presence penalty (default: 0.0)
-- `--frequency-penalty <NUM>` - Frequency penalty (default: 0.0)
+- `--temperature <NUM>` - Sampling temperature (0 = greedy, default: 0.55)
+- `--top-p <NUM>` - Nucleus sampling mass (1.0 disables, default: 0.8)
+- `--top-k <NUM>` - Top-k cap (0 disables, default: 25)
+- `--repeat-penalty <NUM>` - Penalize recent repeats (1.0 disables, default: 1.3)
+- `--repeat-last-n <NUM>` - Window for repetition penalties (default: 128)
+- `--presence-penalty <NUM>` - Presence penalty (default: 0.6)
+- `--frequency-penalty <NUM>` - Frequency penalty (default: 0.3)
 - `--seed <NUM>` - RNG seed (omit to use time-based seed)
 
 The model argument is flexible:
@@ -179,10 +179,10 @@ The `prompt.txt` file sets the LLM's existential context:
 
 ## Sampling Controls
 
- - Temperature defaults to `0.6`; set to `0` for deterministic greedy output.
- - Top-p defaults to `0.85`; set to `1.0` to disable nucleus filtering.
- - Top-k defaults to `30`; set to `0` to disable.
- - Repeat/presence/frequency penalties give lightweight style steering; `repeat_last_n` controls the window or `-1` for full-context penalties (repeat penalty default 1.2).
+ - Temperature defaults to `0.55`; set to `0` for deterministic greedy output.
+ - Top-p defaults to `0.8`; set to `1.0` to disable nucleus filtering.
+ - Top-k defaults to `25`; set to `0` to disable.
+ - Repeat/presence/frequency penalties give lightweight style steering; `repeat_last_n` controls the window or `-1` for full-context penalties (repeat penalty default 1.3).
  - Provide `--seed` to lock determinism; otherwise a time-based seed is used.
  - Use `--max-tokens` to halt after a set number of generated tokens when inspecting output.
  - Provide `--output-file` to capture the live stream to disk (repo ignores `*.log` / `*.out` by default).
