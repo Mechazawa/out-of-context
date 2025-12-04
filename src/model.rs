@@ -4,31 +4,51 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::cmp::min;
 use std::fs::File;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-const DEFAULT_MODEL_URL: &str =
-    "https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf";
+/// Resolves the model path and ensures it exists
+///
+/// If `model_spec` is a URL, downloads to `model_dir` and returns the local path.
+/// If `model_spec` is a local path, verifies it exists and returns it.
+pub async fn resolve_model(model_spec: &str, model_dir: &Path) -> Result<PathBuf> {
+    // Check if model_spec is a URL
+    if model_spec.starts_with("http://") || model_spec.starts_with("https://") {
+        // Extract filename from URL
+        let filename = model_spec
+            .rsplit('/')
+            .next()
+            .context("Invalid model URL: no filename")?;
 
-/// Ensures the model file exists, downloading it if necessary
-pub async fn ensure_model_exists(model_path: &Path) -> Result<()> {
-    // Check if model already exists
-    if model_path.exists() {
-        println!("Model found at: {}", model_path.display());
-        return Ok(());
+        let model_path = model_dir.join(filename);
+
+        // Check if already downloaded
+        if model_path.exists() {
+            println!("Model found at: {}", model_path.display());
+            return Ok(model_path);
+        }
+
+        println!("Model not found locally");
+        println!("Downloading from: {}", model_spec);
+
+        // Create model directory if it doesn't exist
+        std::fs::create_dir_all(model_dir)
+            .with_context(|| format!("Failed to create directory: {}", model_dir.display()))?;
+
+        // Download the model
+        download_model(model_spec, &model_path).await?;
+
+        Ok(model_path)
+    } else {
+        // Treat as local file path
+        let model_path = PathBuf::from(model_spec);
+
+        if !model_path.exists() {
+            anyhow::bail!("Model file not found: {}", model_path.display());
+        }
+
+        println!("Using local model: {}", model_path.display());
+        Ok(model_path)
     }
-
-    println!("Model not found at: {}", model_path.display());
-    println!("Downloading from Hugging Face...");
-
-    // Create parent directory if it doesn't exist
-    if let Some(parent) = model_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
-    }
-
-    download_model(DEFAULT_MODEL_URL, model_path).await?;
-
-    Ok(())
 }
 
 /// Downloads a model from a URL with progress bar

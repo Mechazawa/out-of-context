@@ -127,9 +127,29 @@ chmod +x torment-nexus
 ## Configuration
 
 ### CLI Arguments
-- `--model-path <PATH>` - Model file path (default: `models/smollm-135m-instruct.gguf`)
+- `--model <MODEL>` - Hugging Face URL or local GGUF path (default: SmolLM2-135M-Instruct Q4_K_M URL)
+- `--model-dir <DIR>` - Directory to store downloaded models (default: `models`)
 - `--prompt-file <PATH>` - System prompt file (default: `prompt.txt`)
 - `--context-size <NUM>` - Context window tokens (default: 2048)
+
+The model argument is flexible:
+- **URL**: Auto-downloads and caches in `model-dir`
+- **Local path**: Uses existing GGUF file directly
+
+Examples:
+```bash
+# Use default model (auto-downloads)
+./torment-nexus
+
+# Use different HuggingFace model
+./torment-nexus --model "https://huggingface.co/USER/REPO/resolve/main/model.gguf"
+
+# Use local model file
+./torment-nexus --model ./my-model.gguf
+
+# Change where models are stored
+./torment-nexus --model-dir /mnt/storage/llm-models
+```
 
 ### Memory Tuning
 If running out of memory on Pi:
@@ -232,13 +252,22 @@ watch -n 1 free -h &
 - Try building directly on Pi (slower but guaranteed)
 - Check clang is available in Docker image
 
-## Future Modifications
+## Using Different Models
 
-### Different Models
-To use different models, change the URL in `model.rs`:
-```rust
-const DEFAULT_MODEL_URL: &str = "https://huggingface.co/.../model.gguf";
+No code changes needed! Just use the `--model` argument:
+
+```bash
+# TinyLlama 1.1B (larger model, needs more memory)
+./torment-nexus --model "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf" --context-size 1024
+
+# Qwen2.5 0.5B (similar size to SmolLM)
+./torment-nexus --model "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+
+# Local model file
+./torment-nexus --model ./path/to/your-model.gguf
 ```
+
+## Future Modifications
 
 ### Alternative Sampling
 Replace greedy sampling with temperature in `generator.rs`:

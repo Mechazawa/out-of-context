@@ -21,6 +21,16 @@ pub fn generate_infinite(llm_setup: &LLMSetup, context: &mut LlamaContext, promp
 
     println!("Prompt tokens: {}", tokens_used);
     println!("Context capacity: {}", context_size);
+
+    // Check if prompt is too large for context
+    if tokens_used >= context_size {
+        anyhow::bail!(
+            "Prompt ({} tokens) exceeds context window ({} tokens). Use a shorter prompt or increase --context-size.",
+            tokens_used,
+            context_size
+        );
+    }
+
     println!("Available tokens: {}\n", context_size - tokens_used);
 
     // Create batch and add prompt tokens

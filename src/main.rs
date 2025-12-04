@@ -14,11 +14,11 @@ async fn main() -> Result<()> {
     println!("=== Torment Nexus ===");
     println!("An LLM that generates until context exhaustion\n");
 
-    // Ensure model exists (download if needed)
-    model::ensure_model_exists(&args.model_path).await?;
+    // Resolve model path (download if URL, verify if local)
+    let model_path = model::resolve_model(&args.model, &args.model_dir).await?;
 
     // Initialize LLM backend and model
-    let llm_setup = llm::LLMSetup::new(&args.model_path)?;
+    let llm_setup = llm::LLMSetup::new(&model_path)?;
 
     // Create context
     let mut context = llm_setup.create_context(args.context_size)?;

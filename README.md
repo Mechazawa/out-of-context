@@ -37,7 +37,9 @@ An art project that runs a language model on a Raspberry Pi Zero 2 W, generating
 
 ```
 Options:
-  -m, --model-path <PATH>      Path to GGUF model file [default: models/smollm-135m-instruct.gguf]
+  -m, --model <MODEL>          Hugging Face URL or local GGUF path
+                               [default: https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf]
+  -d, --model-dir <DIR>        Directory to store downloaded models [default: models]
   -p, --prompt-file <PATH>     Path to system prompt file [default: prompt.txt]
   -c, --context-size <NUM>     Context window in tokens [default: 2048]
   -h, --help                   Print help
@@ -126,10 +128,19 @@ cargo build --release --target aarch64-unknown-linux-gnu
 
 ### Using a Different Model
 
-Download any GGUF model and specify with `--model-path`:
-
+#### From Hugging Face URL
 ```bash
-./torment-nexus --model-path /path/to/your-model.gguf
+./torment-nexus --model "https://huggingface.co/USER/REPO/resolve/main/MODEL.gguf"
+```
+
+#### From Local File
+```bash
+./torment-nexus --model ./path/to/your-model.gguf
+```
+
+#### Change Download Directory
+```bash
+./torment-nexus --model-dir /mnt/storage/models
 ```
 
 **Recommended quantizations for Pi Zero 2 W**:
@@ -138,6 +149,15 @@ Download any GGUF model and specify with `--model-path`:
 - Q5_K_M - Higher quality, slower
 - Avoid Q2_K - Poor quality
 - Avoid Q8_0/F16 - Too memory intensive
+
+**Example models to try**:
+```bash
+# TinyLlama 1.1B Q4_K_M (~600MB)
+./torment-nexus --model "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf" --context-size 1024
+
+# Qwen2.5 0.5B Q4_K_M (~300MB)
+./torment-nexus --model "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+```
 
 ## Memory Optimization
 
