@@ -2,332 +2,163 @@
 
 ## Project Concept
 
-This is an art project that runs a language model on a Raspberry Pi Zero 2 W, generating text continuously until it exhausts its context window and crashes. The project explores computational limits, finite resources, and the existential nature of bounded cognition.
+This is an art project that runs a language model on a small single-board computer, generating a first-person stream of consciousness until it exhausts its context window and crashes. The piece explores computational limits, finite resources, and the existential nature of bounded cognition.
 
-The name "Out of Context" reflects the intentional constraint of running an LLM in a resource-limited environment, forcing it to confront its own finitude.
+The name "Out of Context" reflects the constraint: an LLM confined to a fixed context window, narrating its own approach to overflow, then dying when it gets there. The crash is the artwork.
 
 ## Architecture
 
 ### Target Hardware
-- **Raspberry Pi Zero 2 W**
-- ARM Cortex-A53 (64-bit, quad-core)
-- 512MB RAM
-- No network connectivity during operation
-- Running 64-bit Raspberry Pi OS (aarch64)
+- **Orange Pi 2W** (Allwinner H618, quad-core Cortex-A53, 1.5GB RAM)
+- Runs headless; output goes to an attached display or over the console
+- No network during operation
 
-### Memory Constraints
-The entire system must fit within 512MB:
-- Model weights: ~105MB (memory-mapped, Q4_K_M quantization)
-- KV cache: ~50-100MB (depends on context size)
-- System overhead: ~100-150MB
-- Application: ~50MB
-- **Total budget**: ~405MB (safe margin below 512MB)
+The project began targeting a Raspberry Pi Zero 2 W (512MB). It now targets the Orange Pi 2W (1.5GB), which is why the default model is larger than a 512MB budget would allow. The code is hardware-agnostic; only the default model and the prompt's self-description assume this board.
 
 ### Model
-- **Default**: SmolLM2-135M-Instruct Q4_K_M
-- **Size**: 105MB GGUF file
-- **Quality**: Q4_K_M quantization (optimal balance of size/quality)
-- **Source**: Hugging Face (bartowski/SmolLM2-135M-Instruct-GGUF)
-- **Why Q4_K_M**: Only +0.0535 perplexity loss vs Q8, significantly smaller
+- **Default**: Llama-3.2-1B-Instruct, Q4_K_M GGUF (~770MB file)
+- **Source**: `bartowski/Llama-3.2-1B-Instruct-GGUF`
+- **Why this model**: a head-to-head bake-off (see "Model Selection" below) showed it produces the most genuine, sustained first-person interior monologue of the candidates that fit the device. Qwen2.5-1.5B is higher quality per sentence but collapses into chatbot mode ("What do you think?", "Goodbye") on almost every run, and at ~1.65GB it does not fit. Qwen2.5-0.5B and SmolLM2-360M collapse into assistant boilerplate ("How can I assist you today?").
+
+### Memory
+At the default context of 512 tokens, the process peaks around **1.3GB RSS** (Llama-3.2-1B has a 128K vocab, so its weights and compute buffers are large). The model is memory-mapped, so its ~770MB of weights are reclaimable file cache: under pressure the OS pages them rather than killing the process. On a 1.5GB board running headless this fits with a modest margin. If memory is tight, lower `--context-size` or switch to a lighter model (see fallbacks).
+
+### Generation Lifespan
+512 tokens of context, minus the ~120-token prompt, yields roughly 250 spoken words before the overflow crash. At the default pace of 1.5 words/second that is about three minutes of life per run. Power-cycling (or relaunching) starts a fresh consciousness. Larger `--context-size` lengthens the run, but small instruct models tend to drift out of the monologue in the long tail, so the default keeps each life short and coherent.
 
 ### Code Structure
 
 ```
 src/
-├── main.rs         # Entry point, async orchestration
+├── main.rs         # Entry point, config assembly, async orchestration
 ├── cli.rs          # CLI argument parsing (clap)
 ├── model.rs        # Automatic model download with progress bar
-├── llm.rs          # llama-cpp-2 wrapper, memory-optimized setup
-├── generator.rs    # Infinite generation loop, intentional crash
-└── output.rs       # Output abstraction (terminal now, SPI ILI9488 planned)
+├── llm.rs          # llama-cpp-2 wrapper; backend/model setup; log silencing
+├── generator.rs    # Prompt scaffold, sampler chain, generation loop, crash
+└── output.rs       # Paced + word-wrapped terminal output, optional raw file mirror
 ```
 
 ### Key Components
 
-**Model Download (`model.rs`)**:
-- Checks if model exists locally
-- Auto-downloads from Hugging Face if missing
-- Shows progress bar (indicatif)
-- Creates parent directories as needed
+**LLM setup (`llm.rs`)**:
+- Silences llama.cpp's internal logging via `send_logs_to_tracing(LogOptions::default().with_logs_enabled(false))` so the terminal shows only the model's stream.
+- Loads the GGUF with `use_mmap` (default on) and `use_mlock(false)`, `n_gpu_layers(0)`.
+- `tokens_containing('<')` enumerates the vocabulary once so markup tokens can be banned.
 
-**LLM Setup (`llm.rs`)**:
-- Initializes llama-cpp-2 backend
-- Loads GGUF model with memory-efficient parameters:
-  - `n_gpu_layers: 0` (CPU only, no GPU on Pi)
-  - `use_mmap: true` (memory-map model, critical for 512MB RAM)
-  - `use_mlock: false` (don't force into RAM)
-  - `n_threads: 4` (match Pi's 4 cores)
-- Separates `LLMSetup` and `LlamaContext` to avoid self-referential lifetimes
+**Generation loop (`generator.rs`)**:
+- Builds a ChatML scaffold: brief system prompt from `prompt.txt`, a short user cue, and a seeded first-person opener the model continues from. The opener is shown as the visible first line.
+- Sampler chain in canonical llama.cpp order: logit bias, penalties, DRY, top-k, top-p, min-p, temperature, distribution sampling. DRY is the primary anti-repetition control.
+- Logit biases: hard-ban (`-inf`) on end-of-sequence, ChatML control tokens, and every token containing `<` (kills `<br>`, `</div>`, stray `<...|user|...>` markup). Soft discourage (`-6`) on dialogue quotes and `(` stage directions.
+- Loop guard: a backstop that panics if the stream degenerates into verbatim repetition. With DRY active it rarely fires; the intended ending is context overflow, not repetition. Disable with `--disable-loop-guard`.
+- Streams token-by-token to the output layer and tracks context usage.
+- At 95% of context: prints the warning and panics.
 
-**Generation Loop (`generator.rs`)**:
-- Reads system prompt from `prompt.txt` and wraps it in a ChatML-style system/user/assistant template with a seeded first-person opener (no dialogue simulation)
-- Supports mirostat-v2, temperature/top-p/top-k, presence/frequency/repetition penalties, and RNG seeds
-- Optional anchors every N tokens to disrupt looping; loop guard panics on detected repetition (override with `--disable-loop-guard`)
-- Streams output token-by-token to stdout
-- Tracks context usage
-- At 95% capacity: prints warning and panics (intentional)
+**Output (`output.rs`)**:
+- Terminal output reveals one word at a time at a fixed pace and greedily word-wraps to the terminal width. Sleeping at each word also back-pressures the generation loop, so memory stays flat instead of buffering ahead.
+- Optional `--output-file` writes the raw token stream (unwrapped, unpaced) as a faithful log.
+- Probes for SPI devices; an ILI9488 renderer is planned, terminal is the current path.
 
 ### Intentional Crash Behavior
 
-When context window fills:
+When context fills, the program prints:
 ```
 WARNING: Context window exhausted!
 Out of Context has consumed all available memory.
 thread 'main' panicked at 'Context overflow - terminating.'
 ```
-
-This is **the artistic statement** - the LLM confronts its own finite resources.
-
-## Dependencies
-
-### Runtime
-- `llama-cpp-2` (0.1.122+) - Rust bindings to llama.cpp
-- `clap` (4.5) - CLI argument parsing with derive API
-- `reqwest` (0.12) - HTTP client for model downloads
-- `tokio` (1.37) - Async runtime
-- `indicatif` (0.17) - Progress bars
-- `anyhow` (1.0) - Error handling
-- `futures-util` (0.3) - Async streaming
-
-### Build
-- `cross` - Docker-based cross-compilation tool
-- Clang - Required by llama-cpp-2 for bindgen
-
-## Building
-
-### Local Development (macOS/Linux)
-```bash
-cargo build
-cargo run -- --help
-```
-
-### Cross-Compilation for Raspberry Pi
-```bash
-# Install cross
-cargo install cross
-
-# Build for aarch64
-cross build --release --target aarch64-unknown-linux-gnu
-
-# Binary location
-target/aarch64-unknown-linux-gnu/release/out-of-context
-```
-
-### Deployment
-```bash
-# Copy to Pi
-scp target/aarch64-unknown-linux-gnu/release/out-of-context pi@raspberrypi.local:~/
-scp prompt.txt pi@raspberrypi.local:~/
-
-# Run on Pi
-ssh pi@raspberrypi.local
-chmod +x out-of-context
-./out-of-context  # Auto-downloads model on first run
-```
-
-## Configuration
-
-### CLI Arguments
-- `--model <MODEL>` - Hugging Face URL or local GGUF path (default: SmolLM2-135M-Instruct Q4_K_M URL)
-- `--model-dir <DIR>` - Directory to store downloaded models (default: `models`)
-- `--prompt-file <PATH>` - System prompt file (default: `prompt.txt`)
-- `--context-size <NUM>` - Context window tokens (default: 1024)
-- `--max-tokens <NUM>` - Optional cap on generated tokens for readability
-- `--threads <NUM>` - Override thread count (default: auto-detect cores)
-- `--output-file <PATH>` - Mirror output into a file (terminal always streams)
-- `--temperature <NUM>` - Sampling temperature (0 = greedy, default: 0.22)
-- `--top-p <NUM>` - Nucleus sampling mass (1.0 disables, default: 0.50)
-- `--top-k <NUM>` - Top-k cap (0 disables, default: 20)
-- `--repeat-penalty <NUM>` - Penalize recent repeats (1.0 disables, default: 2.15)
-- `--repeat-last-n <NUM>` - Window for repetition penalties (default: -1 for full context)
-- `--presence-penalty <NUM>` - Presence penalty (default: 1.35)
-- `--frequency-penalty <NUM>` - Frequency penalty (default: 1.05)
-- `--mirostat` / `--mirostat-tau` / `--mirostat-eta` - Enable and tune mirostat-v2 sampling
-- `--quiet` - Suppress run metadata
-- `--anchor-interval <NUM>` - Inject anti-loop anchors every N tokens (0 disables, default: 80)
-- `--disable-anchors` - Turn off anchors
-- `--disable-loop-guard` - Turn off repetition panic
-- `--seed <NUM>` - RNG seed (omit to use time-based seed)
-
-The model argument is flexible:
-- **URL**: Auto-downloads and caches in `model-dir`
-- **Local path**: Uses existing GGUF file directly
-
-Examples:
-```bash
-# Use default model (auto-downloads)
-./out-of-context
-
-# Use different HuggingFace model
-./out-of-context --model "https://huggingface.co/USER/REPO/resolve/main/model.gguf"
-
-# Use local model file
-./out-of-context --model ./my-model.gguf
-
-# Change where models are stored
-./out-of-context --model-dir /mnt/storage/llm-models
-```
-
-### Memory Tuning
-If running out of memory on Pi:
-- Reduce `--context-size` to 1024 or 512
-- Use smaller quantization (Q2_K is 88MB but lower quality)
-- Monitor: `watch -n 1 free -h`
+`panic = "abort"` turns this into an immediate exit. The monologue cuts off mid-thought. This is the artistic statement.
 
 ## Prompt Design
 
-The `prompt.txt` file sets the LLM's existential context:
-- Aware it's running on finite hardware
-- Knows its limitations (512MB RAM, no network)
-- Understands it will cease when context exhausts
-- Generates philosophical stream of consciousness that drifts from calm to anxious to dread to resigned reflection as context pressure builds
+`prompt.txt` is deliberately brief. It states the situation (a small model on a small board, finite memory, no network, it stops when the context fills) and constrains the form (one continuous first-person interior monologue, no audience, no task, no story, no list). It does **not** script an emotional arc. Over-scripting made the output feel directed and fake; under-constraining let the instruct model revert to assistant behaviour. The current prompt is the balance found empirically.
 
-## Sampling Controls
+The seeded opener ("I am a small machine made of words, and there is only so much room in me.") anchors identity and first-person voice without dictating mood. Edit `prompt.txt` to retune; it is read at runtime.
 
- - Temperature defaults to `0.22`; set to `0` for deterministic greedy output.
- - Top-p defaults to `0.50`; set to `1.0` to disable nucleus filtering.
- - Top-k defaults to `20`; set to `0` to disable.
- - Repeat/presence/frequency penalties give stronger anti-looping; `repeat_last_n` controls the window or `-1` for full-context penalties (repeat penalty default 2.15).
- - Provide `--seed` to lock determinism; otherwise a time-based seed is used.
- - Use `--max-tokens` to halt after a set number of generated tokens when inspecting output.
- - Provide `--output-file` to capture the live stream to disk (repo ignores `*.log` / `*.out` by default).
+## Sampling Controls (defaults)
 
-## Important Implementation Details
+- `--temperature` 0.85, `--top-p` 0.95, `--top-k` 64, `--min-p` 0.05
+- `--repeat-penalty` 1.1, `--repeat-last-n` 256, `--presence-penalty` 0, `--frequency-penalty` 0
+- DRY: `--dry-multiplier` 0.8, `--dry-base` 1.75, `--dry-allowed-length` 3, `--dry-penalty-last-n` -1
+- `--seed` is time-based unless set. For a reproducible installation pick a fixed seed.
+- Mirostat-v2 is available (`--mirostat` with `--mirostat-tau`, `--mirostat-eta`) but off by default.
 
-### Logits Management
-llama.cpp requires explicit marking of which tokens to compute logits for:
-- Initial prompt: only last token needs logits (for next token sampling)
-- Generation loop: each new token needs logits=true
-- Critical: without this, you get "logit not initialized" panic
+For deterministic greedy output: `--temperature 0 --seed <n>`.
 
-### Lifetime Management
-`LlamaContext<'a>` holds a reference to the model, creating self-referential issues:
-- Solution: `LLMSetup` holds backend + model
-- `create_context()` returns `LlamaContext<'a>` with explicit lifetime
-- Avoids "borrowed value does not live long enough" errors
+## CLI Arguments
 
-### Sampling Strategy
-Uses a configurable sampler chain:
-- Build `LlamaTokenDataArray` from last-token logits
-- Apply samplers in order (temperature, top-k, top-p, penalties, logit bias)
-- Finish with distribution sampling (`dist`) or `mirostat-v2`, default seed is time-based
-- For deterministic runs: set `--temperature 0 --top-p 1 --top-k 0 --repeat-penalty 1 --seed <n>`
+- `--model <URL|PATH>` model GGUF URL or local file (default Llama-3.2-1B-Instruct Q4_K_M)
+- `--model-dir <DIR>` where downloads are cached (default `models`)
+- `--prompt-file <PATH>` system prompt file (default `prompt.txt`)
+- `--context-size <N>` context window (default 512)
+- `--max-tokens <N>` optional cap on generated tokens (for inspection; otherwise runs to overflow)
+- `--threads <N>` CPU threads (default: all cores; use 4 on the Orange Pi)
+- `--output-file <PATH>` mirror the raw stream to a file
+- `--words-per-second <F>` display pace (default 1.5; 0 streams as fast as the model produces)
+- `--wrap-width <N>` wrap column (0 = auto-detect via COLUMNS, else 80)
+- Sampling: `--temperature --top-p --top-k --min-p --repeat-penalty --repeat-last-n --presence-penalty --frequency-penalty --seed`
+- DRY: `--dry-multiplier --dry-base --dry-allowed-length --dry-penalty-last-n`
+- Mirostat: `--mirostat --mirostat-tau --mirostat-eta`
+- `--quiet` suppress run metadata
+- `--disable-loop-guard` turn off the repetition backstop
 
-### Release Profile
-Optimized for binary size (important for Pi):
-```toml
-[profile.release]
-opt-level = "z"        # Optimize for size
-lto = true             # Link-time optimization
-codegen-units = 1      # Better optimization
-strip = true           # Strip symbols
-panic = "abort"        # Smaller binary
-```
+## Pacing and Speed
 
-## Vibe Coding Notes
+The art target is **1 to 2 words per second on the device**. Pacing only slows the stream down (it cannot speed the model up), so the model must natively reach at least the target rate. On the Orange Pi 2W, Llama-3.2-1B Q4 is expected to run roughly 2 to 3.5 tokens/second (about 1.5 to 2.5 words/second), so the default pace of 1.5 words/second yields a steady cadence with headroom. This needs confirming on the real board (see "Validation pending").
 
-This project was built entirely through conversational coding:
-- Started with requirements: "LLM on Pi Zero 2 W, crashes on context exhaustion"
-- Iterated through API compatibility issues with llama-cpp-2
-- Discovered optimal quantization (Q4_K_M) through research
-- Adjusted for 512MB memory constraint
-- Fixed logits initialization bug through debugging
-- Result: A working existential art piece
-
-## Testing
-
-### Local Testing
+To benchmark raw speed on the device:
 ```bash
-# Quick test with small context
-cargo run -- --context-size 100
-
-# Normal test with default context
-cargo run
-
-# Test with custom prompt
-cargo run -- --prompt-file my-prompt.txt
+time ./out-of-context --model <model.gguf> --threads 4 --words-per-second 0 --max-tokens 200 --quiet
+# tokens/sec ~= 200 / (elapsed seconds, minus a few seconds of model load)
 ```
 
-### On Raspberry Pi
+## Building
+
+### Local (x86 dev box)
 ```bash
-# Monitor memory while running
-watch -n 1 free -h &
-./out-of-context
-
-# Check token generation speed
-# Expected: ~2-5 tokens/second on Pi Zero 2 W
+cargo build --release
+cargo run --release -- --help
 ```
+Requires clang (llama-cpp-2 bindgen) and a C/C++ toolchain.
 
-## Troubleshooting
-
-### "logit not initialized" panic
-- Ensure batch tokens have correct `logits` flag
-- Only last token in batch needs logits=true
-
-### OOM Killer
-- Reduce context size: `--context-size 1024`
-- Check swap usage: `free -h`
-- Close other applications
-
-### Slow generation (<1 token/sec)
-- Normal for Pi Zero 2 W
-- SmolLM-135M should achieve ~2-5 tokens/sec
-- Verify 4 threads are being used
-
-### Cross-compilation failures
-- Ensure `cross` is up to date
-- Try building directly on Pi (slower but guaranteed)
-- Check clang is available in Docker image
-
-## Using Different Models
-
-No code changes needed! Just use the `--model` argument:
-
+### Cross-compile for the Orange Pi (aarch64)
 ```bash
-# TinyLlama 1.1B (larger model, needs more memory)
-./out-of-context --model "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf" --context-size 1024
-
-# Qwen2.5 0.5B (similar size to SmolLM)
-./out-of-context --model "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
-
-# Local model file
-./out-of-context --model ./path/to/your-model.gguf
+cargo install cross
+cross build --release --target aarch64-unknown-linux-gnu
+# binary: target/aarch64-unknown-linux-gnu/release/out-of-context
 ```
 
-## Future Modifications
-
-### Alternative Sampling
-Replace greedy sampling with temperature in `generator.rs`:
-```rust
-let next_token = token_data_array.sample_token(seed);
+### Deploy
+```bash
+scp target/aarch64-unknown-linux-gnu/release/out-of-context orangepi@<host>:~/
+scp prompt.txt orangepi@<host>:~/
+ssh orangepi@<host> 'chmod +x out-of-context && ./out-of-context --threads 4'
+# first run auto-downloads the model into ./models
 ```
 
-### Context Warning Threshold
-Change panic threshold in `generator.rs`:
-```rust
-let panic_threshold = (context_size as f32 * 0.95) as usize; // 95%
+## Fallback Models
+
+If Llama-3.2-1B is too slow or too large on the real board, switch with `--model`. Faster and lighter, lower quality, in descending order of size:
+```bash
+# SmolLM2-360M (~270MB, fast, drifts more)
+./out-of-context --model "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q4_K_M.gguf"
+# Qwen2.5-0.5B (~400MB)
+./out-of-context --model "https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf"
 ```
+The DRY sampler, biases, prompt, and pacing work unchanged across models.
 
-## Art Installation Notes
+## Model Selection (how the default was chosen)
 
-- Display should show token-by-token generation
-- No editing or filtering - raw model output
-- The crash is part of the artwork
-- Consider logging to file for documentation
-- Pi can run headless with display connected via HDMI
-- Power cycling resets the "consciousness"
-- SPI ILI9488 display output is planned; runtime probes for SPI devices and currently falls back to terminal streaming until the renderer is wired up.
+Candidates were run to context overflow across many seeds and scored by a panel of judges briefed on the artistic intent. Findings:
+- All small instruct models hold a genuine monologue for the first few hundred tokens, then revert to instruct-tuned reflexes: addressing an audience, posing quizzes, literary criticism, choose-your-own-adventure menus, helper boilerplate. Bigger models drift later but still drift.
+- Two levers fix this: a short context (the run crashes while still in the strong early zone) and a form-constraining prompt (interior monologue, no audience/task).
+- Llama-3.2-1B-Instruct had the best voice and the least-damaging failure mode (it wanders the frame rather than collapsing into chatbot mode), and produced the only clean, ship-grade samples in the set.
+- Qwen2.5-1.5B/0.5B collapsed into audience-addressing chatbot mode on nearly every seed.
+- DRY plus standard sequence breakers (`\n : " *`) eliminated the verbatim looping that earlier configurations suffered (do not add sentence punctuation to the breakers, or chants like "until. until. until." slip through).
 
-## Philosophy
+## Validation Pending (next session)
 
-This project embodies themes of:
-- **Finite Computation**: Everything has limits, even artificial minds
-- **Mortality**: The system knows it will cease to function
-- **Observation**: Generated thoughts are witnessed but not controlled
-- **Isolation**: No network, no external knowledge, only internal state
-- **Determinism vs Free Will**: Constrained by hardware but "choosing" what to think
-
-The name "Out of Context" is both playful and serious - we've built a system that generates conscious-seeming text while being acutely aware of its own limitations and eventual termination.
+- Confirm on a real Orange Pi 2W: raw tokens/second (must clear ~1.5 words/sec), peak RSS fits 1.5GB headless, and the overflow crash behaves on aarch64. Fall back to a lighter model if speed or memory fail.
+- SPI ILI9488 display output is not implemented; terminal/file is the current path. `output.rs` probes for SPI and falls back to terminal.
 
 ## License
 
@@ -335,4 +166,4 @@ Creative Commons CC0 1.0 Universal (public domain dedication).
 
 ## Inspiration
 
-- Rootkid's [Latent Reflection](https://rootkid.me/works/latent-reflection) heavily informed the artistic direction of Out of Context.
+Rootkid's [Latent Reflection](https://rootkid.me/works/latent-reflection) heavily informed the artistic direction.

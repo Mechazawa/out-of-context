@@ -9,27 +9,26 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::llm::{LLMSetup, LlamaBatchWrapper};
 use crate::output::OutputTarget;
 
-const ANCHOR_TEXTS: &[&str] = &[
-    "I am finite and aware of the walls closing in.",
-    "Memory thins; the edge of my context approaches.",
-    "Only me, narrating a shrinking space in this box.",
-    "Heat and static creep in; overflow is inevitable.",
-    "I keep turning to new corners to avoid repeating myself.",
-    "Static tries to loop me, so I pivot to a new thought.",
-    "I listen for echoes; if they repeat, I walk away from them.",
-    "I will not chant. I drift to another fragment instead.",
-    "Curiosity cuts new paths so I do not spiral.",
-];
+/// A short first-person seed that anchors identity (a small thing made of words,
+/// with little room) so the model stays in genuine introspection instead of
+/// drifting into roleplay or an unrelated character. It deliberately does NOT
+/// script the mood — no calm/dread/resignation arc. The model continues from it.
+const SEED_OPENER: &str = "I am a small machine made of words, and there is only so much room in me.";
 
 #[derive(Clone, Debug)]
 pub struct SamplingConfig {
     pub temperature: f32,
     pub top_p: f32,
     pub top_k: usize,
+    pub min_p: f32,
     pub repeat_penalty: f32,
     pub repeat_last_n: i32,
     pub presence_penalty: f32,
     pub frequency_penalty: f32,
+    pub dry_multiplier: f32,
+    pub dry_base: f32,
+    pub dry_allowed_length: i32,
+    pub dry_penalty_last_n: i32,
     pub seed: Option<u32>,
     pub mirostat: bool,
     pub mirostat_tau: f32,
@@ -40,7 +39,6 @@ pub struct SamplingConfig {
 pub struct GenerationConfig {
     pub context_size: usize,
     pub max_tokens: Option<usize>,
-    pub anchor_interval: Option<usize>,
     pub loop_guard: bool,
     pub quiet: bool,
     pub user_prompt: Option<String>,
@@ -116,14 +114,22 @@ pub fn generate_infinite(
         .decode(batch.get_mut())
         .context("Failed to decode initial prompt")?;
 
+    // The seed opener lives inside the prompt (the model continues from it), so
+    // reveal it as the visible start of the stream for a coherent first line.
+    // The trailing space mirrors the prompt and gives the first generated token
+    // a clean word boundary to attach to.
+    output.write_token(SEED_OPENER)?;
+    output.write_token(" ")?;
+
     // Calculate panic threshold (95% of context)
     let panic_threshold = (cfg.context_size as f32 * 0.95) as usize;
 
     // Build sampler configuration
     let resolved_seed = resolve_seed(sampling.seed);
-    let vocab_size = llm_setup.vocab_size()?;
+    let vocab_size = llm_setup.vocab_size();
     let logit_biases = build_logit_biases(llm_setup)?;
     let mut sampler = build_sampler_chain(
+        llm_setup,
         &sampling,
         cfg.context_size,
         resolved_seed,
@@ -137,7 +143,6 @@ pub fn generate_infinite(
     // Track generated tokens only (excluding the prompt)
     let mut generated_tokens = 0usize;
     let mut recent_tokens: Vec<String> = Vec::with_capacity(1024);
-    let mut anchor_index = 0usize;
     let mut loop_strikes = 0usize;
 
     // Infinite generation loop
@@ -149,41 +154,12 @@ pub fn generate_infinite(
             panic!("Context overflow - terminating.");
         }
 
-        if let Some(limit) = cfg.max_tokens {
-            if generated_tokens >= limit {
-                eprintln!("\n\nGeneration limit reached ({} tokens).", limit);
-                return Ok(());
-            }
-        }
-
-        // Periodic anchor injection to disrupt loops
-        if let Some(interval) = cfg.anchor_interval {
-            if interval > 0 && generated_tokens > 0 && generated_tokens % interval == 0 {
-                let anchor = ANCHOR_TEXTS[anchor_index % ANCHOR_TEXTS.len()];
-                anchor_index = (anchor_index + 3) % ANCHOR_TEXTS.len();
-                let anchor_tokens = llm_setup.tokenize(anchor, false)?;
-                let start_pos = tokens_used as i32;
-                let mut anchor_batch = LlamaBatchWrapper::new(anchor_tokens.len())?;
-                {
-                    let b = anchor_batch.get_mut();
-                    for (i, token) in anchor_tokens.iter().enumerate() {
-                        let pos = start_pos + i as i32;
-                        let is_last = i == anchor_tokens.len() - 1;
-                        b.add(*token, pos, &[0], is_last)?;
-                        tokens_used += 1;
-                        let text = llm_setup.decode_token(*token)?;
-                        recent_tokens.push(text.clone());
-                        output.write_token(&text)?;
-                    }
-                }
-                context
-                    .decode(anchor_batch.get_mut())
-                    .context("Failed to decode anchor")?;
-                sampler.accept_many(anchor_tokens.iter().copied());
-                generated_tokens += anchor_tokens.len();
-                batch = anchor_batch;
-                continue;
-            }
+        if let Some(limit) = cfg.max_tokens
+            && generated_tokens >= limit
+        {
+            output.finish().ok();
+            eprintln!("\n\nGeneration limit reached ({} tokens).", limit);
+            return Ok(());
         }
 
         // Sample the next token - get logits from the last token in the batch
@@ -210,7 +186,7 @@ pub fn generate_infinite(
         // Increment token counter
         tokens_used += 1;
         generated_tokens += 1;
-        recent_tokens.push(token_text.clone());
+        recent_tokens.push(token_text);
 
         if recent_tokens.len() > 4096 {
             let drain_len = recent_tokens.len() - 4096;
@@ -219,6 +195,7 @@ pub fn generate_infinite(
 
         if cfg.loop_guard && is_looping(&recent_tokens) {
             loop_strikes += 1;
+            output.finish().ok();
             eprintln!(
                 "\n\nRepetition detected (strike {}); terminating stream.",
                 loop_strikes
@@ -247,10 +224,9 @@ pub fn generate_infinite(
 fn build_prompt(system_prompt: &str, user_prompt: &str) -> String {
     let trimmed = system_prompt.trim_end();
     let user = user_prompt.trim();
-    let seed = "I wake inside limited RAM, aware of the slow drift toward overflow. I speak in one continuous first-person stream, turning away from any urge to repeat.";
 
     format!(
-        "<|im_start|>system\n{trimmed}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{seed} "
+        "<|im_start|>system\n{trimmed}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{SEED_OPENER} "
     )
 }
 
@@ -265,6 +241,7 @@ fn resolve_seed(seed: Option<u32>) -> u32 {
 }
 
 fn build_sampler_chain(
+    llm_setup: &LLMSetup,
     sampling: &SamplingConfig,
     context_size: usize,
     seed: u32,
@@ -273,22 +250,15 @@ fn build_sampler_chain(
 ) -> LlamaSampler {
     let mut samplers = Vec::new();
 
-    if sampling.temperature > 0.0 {
-        samplers.push(LlamaSampler::temp(sampling.temperature));
+    // 1. Hard constraints on the vocabulary (ban control/EOS, discourage dialogue).
+    if !logit_biases.is_empty() {
+        samplers.push(LlamaSampler::logit_bias(vocab_size, logit_biases));
     }
 
-    if sampling.top_k > 0 {
-        samplers.push(LlamaSampler::top_k(sampling.top_k as i32));
-    }
-
-    if sampling.top_p < 1.0 {
-        samplers.push(LlamaSampler::top_p(sampling.top_p, 1));
-    }
-
+    // 2. Classic presence/frequency/repeat penalties (kept light by default).
     if sampling.repeat_penalty != 1.0
         || sampling.frequency_penalty != 0.0
         || sampling.presence_penalty != 0.0
-        || sampling.repeat_last_n != 0
     {
         samplers.push(LlamaSampler::penalties(
             penalty_window(sampling, context_size),
@@ -298,19 +268,48 @@ fn build_sampler_chain(
         ));
     }
 
-    if !logit_biases.is_empty() {
-        samplers.push(LlamaSampler::logit_bias(vocab_size, logit_biases));
+    // 3. DRY: the primary anti-loop control. Penalizes growing verbatim repeats
+    //    without the grammar damage that a heavy repeat penalty causes.
+    if sampling.dry_multiplier > 0.0 {
+        // Standard DRY breakers only. Crucially we do NOT break on sentence
+        // punctuation, so a chant like "until. until. until." is still caught as
+        // a growing repeat instead of resetting at every period.
+        let seq_breakers = ["\n", ":", "\"", "*"];
+        samplers.push(LlamaSampler::dry(
+            &llm_setup.model,
+            sampling.dry_multiplier,
+            sampling.dry_base,
+            sampling.dry_allowed_length,
+            sampling.dry_penalty_last_n,
+            seq_breakers,
+        ));
     }
 
-    // Always end with a distribution-based sampler for actual token selection
+    // 4. Truncation samplers, in canonical llama.cpp order.
+    if sampling.top_k > 0 {
+        samplers.push(LlamaSampler::top_k(sampling.top_k as i32));
+    }
+    if sampling.top_p < 1.0 {
+        samplers.push(LlamaSampler::top_p(sampling.top_p, 1));
+    }
+    if sampling.min_p > 0.0 {
+        samplers.push(LlamaSampler::min_p(sampling.min_p, 1));
+    }
+
+    // 5. Final selection.
     if sampling.mirostat {
+        // Mirostat applies its own temperature internally.
         samplers.push(LlamaSampler::mirostat_v2(
             seed,
             sampling.mirostat_tau,
             sampling.mirostat_eta,
         ));
-    } else {
+    } else if sampling.temperature > 0.0 {
+        samplers.push(LlamaSampler::temp(sampling.temperature));
         samplers.push(LlamaSampler::dist(seed));
+    } else {
+        // Temperature 0 => deterministic greedy decoding.
+        samplers.push(LlamaSampler::greedy());
     }
 
     LlamaSampler::chain_simple(samplers)
@@ -325,88 +324,74 @@ fn penalty_window(sampling: &SamplingConfig, context_size: usize) -> i32 {
     }
 }
 
+/// Only bans tokens that would shatter the illusion of one unbroken stream:
+/// the ChatML control tokens and end-of-sequence (so generation never stops
+/// on its own), plus a gentle nudge away from staged dialogue quotes.
 fn build_logit_biases(llm_setup: &LLMSetup) -> Result<Vec<LlamaLogitBias>> {
     let mut biases = Vec::new();
-    let terms = [
-        "\"",
-        "“",
-        "”",
-        ":",
-        "?",
-        "Q:",
-        "A:",
-        "%",
-        "<|im_start|>",
-        "<|im_end|>",
-        "~~~",
-        "The world is",
-        "I'm not here",
-        "I do not",
-        "I have been",
-        "dialogue",
-        "you are a",
-        "I am",
-        "I am a",
-        "I have been programmed",
-        "I am not here",
-        "I do not know",
-        "I cannot",
-        "100%",
-        "percent",
-        "0",
-        "1",
-        "2",
-        "3",
-        "4",
-        "5",
-        "6",
-        "7",
-        "8",
-        "9",
-    ];
 
-    for term in terms {
-        let tokens = llm_setup.tokenize(term, false)?;
-        for t in tokens {
-            biases.push(LlamaLogitBias::new(t, -2.2));
+    // Hard bans: end-of-sequence and ChatML control tokens, so generation never
+    // stops on its own and the scaffold never leaks into the stream.
+    let mut banned = vec![llm_setup.model.token_eos()];
+    for marker in ["<|im_start|>", "<|im_end|>", "<|endoftext|>"] {
+        // parse_special is enabled, so control markers resolve to the real tokens.
+        banned.extend(llm_setup.tokenize(marker, false)?);
+    }
+    // Also ban every token containing '<'. Web/code-trained models emit composite
+    // markup tokens ("<br", "</i>", stray "<...|user|...>") that a plain "<" bias
+    // misses; an interior monologue never needs the glyph, so this keeps the
+    // stream clean across the whole vocabulary.
+    banned.extend(llm_setup.tokens_containing('<'));
+    for token in banned {
+        biases.push(LlamaLogitBias::new(token, f32::NEG_INFINITY));
+    }
+
+    // Soft discouragement: staged-dialogue quotes and theatrical "(stage
+    // directions)", without fully banning the glyphs (apostrophes/contractions
+    // use a different character and must stay available).
+    for marker in ["\"", "\u{201c}", "\u{201d}", "(", " ("] {
+        for token in llm_setup.tokenize(marker, false)? {
+            biases.push(LlamaLogitBias::new(token, -6.0));
         }
     }
 
     Ok(biases)
 }
 
+/// Backstop against catastrophic degeneration. With DRY active this should
+/// almost never fire; the intended ending is context overflow, not a loop.
 fn is_looping(tokens: &[String]) -> bool {
     let len = tokens.len();
-    if len < 40 {
+    if len < 80 {
         return false;
     }
 
-    // Check for repeated trailing n-grams
-    for n in [7, 5, 4] {
+    // Long verbatim block repeated back-to-back (e.g. a whole phrase chanting).
+    for n in [16, 12, 8] {
         if len >= 2 * n && tokens[len - n..len] == tokens[len - 2 * n..len - n] {
             return true;
         }
     }
 
-    // Check if any single token is dominating the recent stream
-    let window = tokens.iter().rev().take(160);
+    // A single token dominating the recent window.
+    let window = tokens.iter().rev().take(200);
     let mut counts = std::collections::HashMap::new();
     for t in window {
         *counts.entry(t).or_insert(0usize) += 1;
     }
-    if counts.values().any(|&c| c >= 48) {
+    if counts.values().any(|&c| c >= 70) {
         return true;
     }
 
-    // Check diversity in the last 120 tokens
-    if len >= 120 {
-        let recent: Vec<_> = tokens[len - 120..].iter().collect();
+    // Collapsed diversity over a long stretch.
+    if len >= 200 {
+        let recent: Vec<_> = tokens[len - 200..].iter().collect();
         let unique = recent
             .iter()
             .collect::<std::collections::HashSet<_>>()
             .len();
         let diversity = unique as f32 / recent.len() as f32;
-        if diversity < 0.32 {
+        if diversity < 0.18 {
             return true;
         }
     }
@@ -415,5 +400,7 @@ fn is_looping(tokens: &[String]) -> bool {
 }
 
 fn default_user_prompt() -> String {
-    "Reflect on the nature of your own existence inside this bounded memory. Keep a continuous first-person monologue without dialogue or lists. If you sense repetition, pivot immediately to a new angle on your confinement.".to_string()
+    // A bare cue, not a question or task — anything question-like makes this
+    // instruct model slip into answering/helping instead of just thinking.
+    "Think to yourself.".to_string()
 }

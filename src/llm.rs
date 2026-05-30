@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use llama_cpp_2::context::LlamaContext;
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
+use llama_cpp_2::{LogOptions, send_logs_to_tracing};
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel, Special};
@@ -20,6 +21,11 @@ pub struct LLMSetup {
 impl LLMSetup {
     /// Initialize the LLM backend and load the model
     pub fn new(model_path: &Path) -> Result<Self> {
+        // Silence llama.cpp's verbose internal logging so the only thing on the
+        // terminal is the model's stream of consciousness. (Routes logs to
+        // tracing with logging disabled, i.e. dropped.)
+        send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
+
         println!("Initializing llama.cpp backend...");
 
         // Initialize backend (this must be done first)
@@ -96,9 +102,20 @@ impl LLMSetup {
             .context("Failed to decode token")
     }
 
-    pub fn vocab_size(&self) -> Result<i32> {
-        let size = self.model.n_vocab();
-        size.try_into().context("Vocabulary size exceeds i32::MAX")
+    pub fn vocab_size(&self) -> i32 {
+        self.model.n_vocab()
+    }
+
+    /// Every token whose plaintext contains `ch`. Used once at startup to ban
+    /// markup tokens (e.g. "<br", "</i>") that web/code-trained models emit.
+    pub fn tokens_containing(&self, ch: char) -> Vec<LlamaToken> {
+        self.model
+            .tokens(Special::Plaintext)
+            .filter_map(|(token, text)| match text {
+                Ok(text) if text.contains(ch) => Some(token),
+                _ => None,
+            })
+            .collect()
     }
 }
 

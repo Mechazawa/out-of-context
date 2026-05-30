@@ -7,7 +7,7 @@ mod output;
 use anyhow::Result;
 use cli::Args;
 use generator::{GenerationConfig, SamplingConfig};
-use output::OutputTarget;
+use output::{OutputConfig, OutputTarget};
 use std::thread;
 
 #[tokio::main]
@@ -28,12 +28,17 @@ async fn main() -> Result<()> {
 
     let sampling = SamplingConfig {
         temperature: sanitize_temperature(args.temperature),
-        top_p: clamp_top_p(args.top_p),
+        top_p: clamp_unit_interval(args.top_p),
         top_k: args.top_k,
+        min_p: clamp_unit_interval(args.min_p),
         repeat_penalty: sanitize_penalty(args.repeat_penalty),
         repeat_last_n: args.repeat_last_n,
         presence_penalty: args.presence_penalty,
         frequency_penalty: args.frequency_penalty,
+        dry_multiplier: args.dry_multiplier.max(0.0),
+        dry_base: args.dry_base,
+        dry_allowed_length: args.dry_allowed_length,
+        dry_penalty_last_n: args.dry_penalty_last_n,
         seed: args.seed,
         mirostat: args.mirostat,
         mirostat_tau: args.mirostat_tau,
@@ -43,17 +48,16 @@ async fn main() -> Result<()> {
     let run_cfg = GenerationConfig {
         context_size: args.context_size,
         max_tokens: args.max_tokens,
-        anchor_interval: if args.disable_anchors || args.anchor_interval == 0 {
-            None
-        } else {
-            Some(args.anchor_interval)
-        },
         loop_guard: !args.disable_loop_guard,
         quiet: args.quiet,
         user_prompt: args.user_prompt.clone(),
     };
 
-    let mut output = OutputTarget::autodetect(args.output_file.as_ref())?;
+    let output_cfg = OutputConfig {
+        words_per_second: args.words_per_second.max(0.0),
+        wrap_width: args.wrap_width,
+    };
+    let mut output = OutputTarget::autodetect(args.output_file.as_ref(), output_cfg)?;
 
     // Create context
     let mut context = llm_setup.create_context(args.context_size, threads)?;
@@ -83,8 +87,8 @@ fn sanitize_temperature(temp: f32) -> f32 {
     temp.max(0.0)
 }
 
-fn clamp_top_p(top_p: f32) -> f32 {
-    top_p.clamp(0.0, 1.0)
+fn clamp_unit_interval(value: f32) -> f32 {
+    value.clamp(0.0, 1.0)
 }
 
 fn sanitize_penalty(penalty: f32) -> f32 {
