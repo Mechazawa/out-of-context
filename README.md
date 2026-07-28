@@ -17,18 +17,27 @@ cargo run --release
 # See the full output unpaced, capped, for inspection
 cargo run --release -- --words-per-second 0 --max-tokens 300
 
+# Skip prompt evaluation on every run after the first
+cargo run --release -- --prompt-cache prompt.cache
+
 # Inspect all options
 cargo run --release -- --help
 ```
 
 ## Target Hardware
-Orange Pi 2W (quad Cortex-A53, 1.5GB RAM), headless. Cross-compile and deploy:
+Orange Pi 2W (quad Cortex-A53 at 1416MHz, 1.5GB RAM), headless. Cross-compile and deploy:
 ```bash
 cargo install cross
-cross build --release --target aarch64-unknown-linux-gnu
-scp target/aarch64-unknown-linux-gnu/release/out-of-context prompt.txt orangepi@<host>:~/
-ssh orangepi@<host> 'chmod +x out-of-context && ./out-of-context --threads 4'
+# -mtune only: the A53 is ARMv8.0, so the instruction set must stay at the
+# armv8-a baseline. Do not use RUSTFLAGS -C target-cpu here; llama-cpp-sys-2
+# turns that into an invalid -march=cortex-a53.
+CFLAGS_aarch64_unknown_linux_gnu=-mtune=cortex-a53 \
+CXXFLAGS_aarch64_unknown_linux_gnu=-mtune=cortex-a53 \
+  cross build --release --target aarch64-unknown-linux-gnu
+scp target/aarch64-unknown-linux-gnu/release/out-of-context prompt.txt user@<host>:~/
+ssh user@<host> 'chmod +x out-of-context && ./out-of-context --threads 4 --prompt-cache p.cache'
 ```
+Building requires `cmake` and a C/C++ toolchain for llama.cpp.
 
 ## CLI (essentials)
 - `--model <URL|PATH>`: GGUF URL or local file (default Llama-3.2-1B-Instruct Q4_K_M).
@@ -36,16 +45,33 @@ ssh orangepi@<host> 'chmod +x out-of-context && ./out-of-context --threads 4'
 - `--words-per-second <F>`: display pace (default 1.5; 0 = as fast as the model runs).
 - `--threads <N>`: use 4 on the Orange Pi.
 - Sampling: `--temperature` 0.85, `--top-p` 0.95, `--top-k` 64, `--min-p` 0.05, `--repeat-penalty` 1.1, plus DRY (`--dry-multiplier` 0.8, `--dry-base` 1.75, `--dry-allowed-length` 3).
+- `--prompt-cache <PATH>`: save the evaluated prompt and reuse it. Worth it on the board, where prompt evaluation costs about 135 seconds per boot.
 - `--seed <N>` for a reproducible run, `--output-file <PATH>` to log the raw stream, `--quiet`, `--disable-loop-guard`.
 
 ## Models
-Default Llama-3.2-1B-Instruct Q4_K_M (~770MB) gives the best monologue voice on this board. Lighter, faster fallbacks if the device is too slow or tight on memory: SmolLM2-360M-Instruct (~270MB), Qwen2.5-0.5B-Instruct (~400MB). Switch with `--model`; all settings work unchanged.
+Default Llama-3.2-1B-Instruct Q4_K_M (~770MB) gives the best monologue voice per unit of compute on this board. Lighter, faster fallbacks if the device is too slow or tight on memory: SmolLM2-360M-Instruct (~270MB), Qwen2.5-0.5B-Instruct (~400MB). Switch with `--model`; all settings work unchanged.
+
+PrismML's 1-bit **Bonsai** family (Q1_0, Apache 2.0) also runs, and Bonsai-4B produces the strongest interior voice of anything tested: no audience-addressing, no assistant reflexes, and it inhabits the situation instead of restating it. The catch is speed. Measured on the board:
+
+| model | file | peak RSS | speed |
+|---|---|---|---|
+| Llama-3.2-1B Q4_K_M | 808MB | 1318MB (x86) | 0.99 tok/s is the 4B figure; 1B not yet measured on-board |
+| Bonsai-4B Q1_0 | 572MB | 700MB | 0.99 tok/s, 0.71 words/sec |
+| Bonsai-1.7B Q1_0 | 248MB | 367MB (x86) | not yet measured on-board |
+
+```bash
+./out-of-context --model models/Bonsai-4B-Q1_0.gguf \
+  --temperature 0.6 --top-k 20 --top-p 0.9 --prompt-cache b4b.cache
+```
+
+On a Cortex-A53, generation speed tracks parameter count rather than bits per weight: 1-bit quantization cuts memory, not the multiply-accumulate count, and ARMv8.0 has no `SDOT` instruction. Bonsai's published throughput figures come from GPUs and from phone SoCs with dotprod, so they do not transfer. Q1_0 needs `llama-cpp-2` 0.1.153 or newer.
 
 ## Notes
 - `prompt.txt` is read at runtime; edit it to retune the voice. It is intentionally brief.
 - The loop guard panics on degenerate repetition as a backstop; the intended ending is context overflow.
 - `AGENTS.md` symlinks to `CLAUDE.md`. SPI ILI9488 display output is planned; terminal/file is current.
-- Raw speed on the real board still needs confirming (target 1 to 2 words/second).
+- There is no usable GPU path on this board. The H618's Mali-G31 is Bifrost, which Mesa's Vulkan driver does not cover, and ggml's OpenCL backend is written for Qualcomm Adreno. Proprietary Mali drivers do not change that.
+- Sustained load sits around 82°C at the full 1416MHz with no throttling. A long-running installation wants a heatsink.
 
 ## License
 Creative Commons CC0 1.0 Universal (public domain).

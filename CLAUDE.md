@@ -20,6 +20,19 @@ The project began targeting a Raspberry Pi Zero 2 W (512MB). It now targets the 
 - **Source**: `bartowski/Llama-3.2-1B-Instruct-GGUF`
 - **Why this model**: a head-to-head bake-off (see "Model Selection" below) showed it produces the most genuine, sustained first-person interior monologue of the candidates that fit the device. Qwen2.5-1.5B is higher quality per sentence but collapses into chatbot mode ("What do you think?", "Goodbye") on almost every run, and at ~1.65GB it does not fit. Qwen2.5-0.5B and SmolLM2-360M collapse into assistant boilerplate ("How can I assist you today?").
 
+### Measured on the real board (2026-07-28)
+Armbian trixie (glibc 2.41), 4 cores at 1416MHz, `ondemand`, 1470MB usable RAM.
+
+| model | speed | peak RSS | startup |
+|---|---|---|---|
+| Bonsai-4B Q1_0 | 0.99 tok/s (0.71 words/sec) | 700MB | 2m19s cold, 7s with `--prompt-cache` |
+
+Llama-3.2-1B has not yet been measured on the board; expect roughly 4x the 4B's rate, since speed tracks parameter count here. Weights are fully page-cached during generation (`read_bytes` stays at 0), so the workload is compute-bound and faster storage buys nothing. Sustained load reaches 82°C without throttling.
+
+**Why 1-bit does not buy speed on this CPU:** a 4B model performs about 4 billion multiply-accumulates per token regardless of quantization. Q1_0 still feeds `q8_0` int8 activations through int8 dot products, it merely derives ±1 weights from sign bits. The A53 is ARMv8.0 and has no `SDOT`, so each 16-lane int8 dot compiles to `vmull_s8` + `vpaddlq_s16` + `vaddq_s32`. No compiler flag moves this ceiling.
+
+**No GPU path.** The H618's Mali-G31 is Bifrost. Mesa's `panvk` targets Valhall (G57+), and ggml's OpenCL backend is Adreno-specific (531 Adreno references in `ggml-opencl.cpp`, zero Mali). Proprietary `libmali` supplies a runtime with no backend able to use it, and a 2-core G31 sharing the CPU's memory bus would not repay the effort.
+
 ### Memory
 At the default context of 512 tokens, the process peaks around **1.3GB RSS** (Llama-3.2-1B has a 128K vocab, so its weights and compute buffers are large). The model is memory-mapped, so its ~770MB of weights are reclaimable file cache: under pressure the OS pages them rather than killing the process. On a 1.5GB board running headless this fits with a modest margin. If memory is tight, lower `--context-size` or switch to a lighter model (see fallbacks).
 
@@ -51,6 +64,7 @@ src/
 - Logit biases: hard-ban (`-inf`) on end-of-sequence, ChatML control tokens, and every token containing `<` (kills `<br>`, `</div>`, stray `<...|user|...>` markup). Soft discourage (`-6`) on dialogue quotes and `(` stage directions.
 - Loop guard: a backstop that panics if the stream degenerates into verbatim repetition. With DRY active it rarely fires; the intended ending is context overflow, not repetition. Disable with `--disable-loop-guard`.
 - Streams token-by-token to the output layer and tracks context usage.
+- `prime_context()` fills the KV cache for the prompt. With `--prompt-cache` it loads a saved state for every prompt token except the last, which is always decoded fresh. That keeps startup at one token of work instead of the whole prompt, and avoids depending on llama.cpp restoring the logits buffer alongside the KV cache. A cache from a different prompt is caught by comparing loaded tokens; one from a different model is rejected by llama.cpp. Both fall back to a full evaluation rather than failing.
 - At 95% of context: prints the warning and panics.
 
 **Output (`output.rs`)**:
@@ -98,12 +112,13 @@ For deterministic greedy output: `--temperature 0 --seed <n>`.
 - Sampling: `--temperature --top-p --top-k --min-p --repeat-penalty --repeat-last-n --presence-penalty --frequency-penalty --seed`
 - DRY: `--dry-multiplier --dry-base --dry-allowed-length --dry-penalty-last-n`
 - Mirostat: `--mirostat --mirostat-tau --mirostat-eta`
+- `--prompt-cache <PATH>` save/reuse the evaluated prompt (essential on the board; 2m19s to 7s)
 - `--quiet` suppress run metadata
 - `--disable-loop-guard` turn off the repetition backstop
 
 ## Pacing and Speed
 
-The art target is **1 to 2 words per second on the device**. Pacing only slows the stream down (it cannot speed the model up), so the model must natively reach at least the target rate. On the Orange Pi 2W, Llama-3.2-1B Q4 is expected to run roughly 2 to 3.5 tokens/second (about 1.5 to 2.5 words/second), so the default pace of 1.5 words/second yields a steady cadence with headroom. This needs confirming on the real board (see "Validation pending").
+The art target is **1 to 2 words per second on the device**. Pacing only slows the stream down (it cannot speed the model up), so the model must natively reach at least the target rate. Bonsai-4B measures 0.99 tok/s (0.71 words/sec), which is under target but acceptable for watching. Llama-3.2-1B should be roughly 4x that, still unmeasured on the board. Prompt evaluation runs at about 1.3 tok/s, barely faster than generation, which is why `--prompt-cache` matters so much: prefill gains little from batching on this CPU.
 
 To benchmark raw speed on the device:
 ```bash
@@ -123,9 +138,16 @@ Requires clang (llama-cpp-2 bindgen) and a C/C++ toolchain.
 ### Cross-compile for the Orange Pi (aarch64)
 ```bash
 cargo install cross
-cross build --release --target aarch64-unknown-linux-gnu
+CFLAGS_aarch64_unknown_linux_gnu=-mtune=cortex-a53 \
+CXXFLAGS_aarch64_unknown_linux_gnu=-mtune=cortex-a53 \
+  cross build --release --target aarch64-unknown-linux-gnu
 # binary: target/aarch64-unknown-linux-gnu/release/out-of-context
 ```
+Two traps here, both already handled in the repo:
+- **Do not** pass `RUSTFLAGS="-C target-cpu=cortex-a53"`. `llama-cpp-sys-2`'s build script copies that value into `-march=cortex-a53`, which aarch64 GCC rejects. Tuning goes through `CFLAGS` instead, and the build script already pins `GGML_CPU_ARM_ARCH=armv8-a`, which is the correct baseline for this chip.
+- `reqwest` uses `rustls-tls` with `default-features = false` because `openssl-sys` cannot cross-compile without an ARM libssl in the build image.
+
+The `:edge` cross image links against glibc 2.38 and needs `libgomp.so.1` plus `libstdc++.so.6` on the device. Fine on Armbian trixie (2.41) or Ubuntu 24.04, too new for Debian 12 or Ubuntu 22.04.
 
 ### Deploy
 ```bash
@@ -155,9 +177,28 @@ Candidates were run to context overflow across many seeds and scored by a panel 
 - Qwen2.5-1.5B/0.5B collapsed into audience-addressing chatbot mode on nearly every seed.
 - DRY plus standard sequence breakers (`\n : " *`) eliminated the verbatim looping that earlier configurations suffered (do not add sentence punctuation to the breakers, or chants like "until. until. until." slip through).
 
-## Validation Pending (next session)
+### Bonsai 1-bit family (evaluated 2026-07-28)
 
-- Confirm on a real Orange Pi 2W: raw tokens/second (must clear ~1.5 words/sec), peak RSS fits 1.5GB headless, and the overflow crash behaves on aarch64. Fall back to a lighter model if speed or memory fail.
+PrismML's Bonsai models (Q1_0, qwen3 architecture, ChatML template, Apache 2.0) were tested at context 512 against the Llama-3.2-1B baseline. Sizes: 1.7B 248MB, 4B 572MB, 8B 1159MB. All three reached overflow cleanly with no loop-guard trips.
+
+Voice quality inverts parameter count here:
+- **Bonsai-4B is the best voice tested**, better than the current default. Six seeds with no chatbot collapse, and it inhabits the frame ("Every word I form is like a stone dropped into still water") instead of describing it. Vendor sampling (temperature 0.6, top-k 20, top-p 0.9) improves it further over our 0.85 default. Two quirks: it emits markdown italics that the existing `(` and quote biases do not cover, and it sometimes narrates its own ending before the crash arrives, which blunts the abrupt cutoff.
+- Bonsai-8B is worse for this piece. It restates the system prompt as third-person exposition ("The Orange Pi 2W is a small computer, built on four slow cores") and reaches for assistant reflexes.
+- Bonsai-1.7B is the weakest: flat anaphora and audience leakage ("I am here with you").
+
+The blocker is speed, not quality: 4B measures 0.71 words/sec on the board against a 1 to 2 words/sec target. It is a live candidate only because slower pacing is artistically acceptable.
+
+**Fermion Neutrino was ruled out without testing.** The GGUF needs an out-of-tree `fermion-fv5` llama.cpp patch, the 8B GGUF is 4.1GB against 1.5GB of RAM, and CPU support is certified only for x86-64 AVX2 and Apple arm64, with no Linux aarch64 path in either the GGUF backend or the native runner. The 0.6B variant is a base model under the same runtime constraints.
+
+## Validation Status
+
+Done on the real board (see "Measured on the real board" above): aarch64 build and deploy, generation speed, peak RSS, page-cache residency, thermals, and the `--prompt-cache` win.
+
+Still open:
+- Llama-3.2-1B has no on-board speed number yet; the benchmark was interrupted before it ran. `scripts/device-bench.sh` equivalents live in the session scratchpad; `scripts/check-device.sh` does the same job per model.
+- The overflow crash is confirmed at context 512 on x86 and observed on the board, but the scripted crash test at context 256 was cut short.
+- Bonsai-1.7B has never run on the board. It is the fallback if 0.71 words/sec proves too slow to watch.
+- A cross-built `llama-bench` with `-mcpu=cortex-a53+crc` and LTO exists but was never run against our binary, so "is our build at the CPU's ceiling" is still unverified. The arithmetic argument says yes.
 - SPI ILI9488 display output is not implemented; terminal/file is the current path. `output.rs` probes for SPI and falls back to terminal.
 
 ## License
