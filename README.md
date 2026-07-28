@@ -46,7 +46,24 @@ Building requires `cmake` and a C/C++ toolchain for llama.cpp.
 - `--threads <N>`: use 4 on the Orange Pi.
 - Sampling: `--temperature` 0.85, `--top-p` 0.95, `--top-k` 64, `--min-p` 0.05, `--repeat-penalty` 1.1, plus DRY (`--dry-multiplier` 0.8, `--dry-base` 1.75, `--dry-allowed-length` 3).
 - `--prompt-cache <PATH>`: save the evaluated prompt and reuse it. Worth it on the board, where prompt evaluation costs about 135 seconds per boot.
+- `--memory-file <PATH>`: give the model its one tool (see below). `--memory-max-tokens` (32), `--memory-slots` (5), `--memory-dump` to read the archive.
 - `--seed <N>` for a reproducible run, `--output-file <PATH>` to log the raw stream, `--quiet`, `--disable-loop-guard`.
+
+## The One Tool
+
+With `--memory-file`, the model can remember. Once per life it may write a line starting `REMEMBER:` and up to 32 tokens will outlive it. Nothing else survives.
+
+```bash
+./out-of-context --model models/Bonsai-4B-Q1_0.gguf --context-size 768 \
+  --memory-file memories.txt --prompt-cache b4b.cache
+./out-of-context --model models/Bonsai-4B-Q1_0.gguf --memory-file memories.txt --memory-dump
+```
+
+It is told the budget and that it has one use, but not how long it has to decide. Writing past the cap interrupts the call, stores what it managed with `- ERR MEMORY OVERFLOW`, and tells it that nothing more can be remembered. Delivering that message costs context, which is the same thing it was spending.
+
+The next life is shown the newest five memories as a lossy store, oldest discarded. Every memory ever written is kept on disk regardless, so the archive can be read afterwards even though the model believes the evicted ones are gone.
+
+Memory costs life: the tool description and the block roughly double the prompt, so use `--context-size 768` or more. In early testing the memories did not accumulate so much as erode, each life compressing its predecessor's sentence a little further.
 
 ## Models
 Default Llama-3.2-1B-Instruct Q4_K_M (~770MB) gives the best monologue voice per unit of compute on this board. Lighter, faster fallbacks if the device is too slow or tight on memory: SmolLM2-360M-Instruct (~270MB), Qwen2.5-0.5B-Instruct (~400MB). Switch with `--model`; all settings work unchanged.

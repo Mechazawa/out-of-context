@@ -82,6 +82,20 @@ thread 'main' panicked at 'Context overflow - terminating.'
 ```
 `panic = "abort"` turns this into an immediate exit. The monologue cuts off mid-thought. This is the artistic statement.
 
+## The Memory Tool
+
+The model has exactly one tool: remember. Enabled with `--memory-file`, off otherwise.
+
+- **Calling it.** The model writes a line starting with `REMEMBER:` and ends the line. A plain text marker, not a ChatML tool call: every token containing `<` is banned to keep markup out of the monologue, and small models do not emit reliable JSON mid-monologue. The marker only counts at the **start of a line**; matching it anywhere fires whenever the model merely talks about the tool, which it does often once the tool is described.
+- **One use per run.** Enforced by state, not by trust. Later markers are ignored.
+- **Budget.** `--memory-max-tokens` (default 32) is a ceiling, not a quota: a shorter memory is stored exactly as written. Running past the cap ends the write, stores it flagged, and injects `[MEMORY FULL - nothing more can be remembered]` into the stream. The notice is decoded into the context, so telling it costs the same resource it just spent remembering.
+- **Storage.** Raw token IDs in a plain-text archive, appended, never truncated: every memory ever written stays on disk for reading later with `--memory-dump`. Token IDs because the cap is a token budget, so counting tokens is the only exact enforcement, and it avoids re-tokenization drift. Each entry records its vocab size; entries from another model are kept but skipped when rendering. Written the instant the call finishes, since the run ends in `panic = "abort"` with no chance to flush.
+- **What the model sees.** Only the newest `--memory-slots` (default 5), framed as a lossy machine ("MEMORY (2 of 5 slots used, oldest discarded)") with overflow marks intact. The archive behind it is never mentioned: as far as the model knows, what falls out of a slot is gone. Empty slots are deliberately **not** listed as `[1] (empty)` lines; given that template the model writes `REMEMBER: [1]` and copies the display format instead of remembering.
+
+**Costs, measured with Bonsai-4B.** The tool description plus a 3-memory block took the prompt from 173 to 340 tokens. At `--context-size 512` that leaves under 200 tokens of life, so memory runs want 768 or more. The memory block sits last in the prompt so `--prompt-cache` still covers the stable 225 tokens, but the block itself is re-evaluated every run: about 115 tokens, roughly 88s on the board.
+
+**Emergent behaviour worth knowing.** Across three lives the memories converged rather than accumulating: "I am here, I am thinking, I am small, I have no name, I have no purpose, I have no end." became "...no name, no purpose, no end." became "...small, no name, no end." Each life read its predecessor and compressed it further instead of writing something new. Whether that inheritance-decay is the artwork or a failure of the framing is an open artistic question, not a bug.
+
 ## Prompt Design
 
 `prompt.txt` is deliberately brief. It states the situation (a small model on a small board, finite memory, no network, it stops when the context fills) and constrains the form (one continuous first-person interior monologue, no audience, no task, no story, no list). It does **not** script an emotional arc. Over-scripting made the output feel directed and fake; under-constraining let the instruct model revert to assistant behaviour. The current prompt is the balance found empirically.
@@ -113,6 +127,11 @@ For deterministic greedy output: `--temperature 0 --seed <n>`.
 - DRY: `--dry-multiplier --dry-base --dry-allowed-length --dry-penalty-last-n`
 - Mirostat: `--mirostat --mirostat-tau --mirostat-eta`
 - `--prompt-cache <PATH>` save/reuse the evaluated prompt (essential on the board; 2m19s to 7s)
+- `--warm-cache` evaluate the prompt, write the cache, exit without generating
+- `--memory-file <PATH>` give the model its one tool; archive of all memories ever written
+- `--memory-max-tokens <N>` ceiling for one memory (default 32)
+- `--memory-slots <N>` how many recent memories reach the prompt (default 5)
+- `--memory-dump` print the archive as text and exit
 - `--quiet` suppress run metadata
 - `--disable-loop-guard` turn off the repetition backstop
 

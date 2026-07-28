@@ -115,6 +115,32 @@ pub struct Args {
     #[arg(long)]
     pub prompt_cache: Option<PathBuf>,
 
+    /// Evaluate the prompt, write the prompt cache, and exit without
+    /// generating. Lets a supervisor pay the evaluation cost between lives so
+    /// the visible run always starts immediately. Requires --prompt-cache.
+    #[arg(long)]
+    pub warm_cache: bool,
+
+    /// Give the model one tool: remember. It may write a single memory per run,
+    /// stored here as raw token IDs. The newest --memory-slots memories are
+    /// shown to the next run. Omit to run without memory.
+    #[arg(long)]
+    pub memory_file: Option<PathBuf>,
+
+    /// Token budget for one memory. The model is told this number. Writing past
+    /// it interrupts the call and the stored memory is marked as overflowed.
+    #[arg(long, default_value_t = 32)]
+    pub memory_max_tokens: usize,
+
+    /// How many of the newest memories the model is shown. The file keeps every
+    /// memory ever written; this only controls how many reach the prompt.
+    #[arg(long, default_value_t = 5)]
+    pub memory_slots: usize,
+
+    /// Print the whole memory archive as text and exit. Requires --memory-file.
+    #[arg(long)]
+    pub memory_dump: bool,
+
     /// Silence run metadata and only stream the model output
     #[arg(long)]
     pub quiet: bool,

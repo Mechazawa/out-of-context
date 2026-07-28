@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::llm::{LLMSetup, LlamaBatchWrapper};
+use crate::memory::{Memory, MemoryStore};
 use crate::output::OutputTarget;
 
 /// A short first-person seed that anchors identity (a small thing made of words,
@@ -44,6 +45,33 @@ pub struct GenerationConfig {
     pub quiet: bool,
     pub user_prompt: Option<String>,
     pub prompt_cache: Option<PathBuf>,
+    pub warm_cache: bool,
+    pub memory: Option<MemoryConfig>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MemoryConfig {
+    pub path: PathBuf,
+    pub max_tokens: usize,
+    pub slots: usize,
+}
+
+/// What the model writes to use its one tool. A plain text marker rather than a
+/// structured tool call: every token containing `<` is banned to keep markup out
+/// of the monologue, which rules out ChatML tool-call syntax, and small models
+/// emit reliable JSON mid-monologue about as often as they emit none at all.
+const MEMORY_MARKER: &str = "REMEMBER:";
+
+/// Shown to the model when its write runs past the token budget. Costs context
+/// to deliver, which is the same resource it just spent remembering.
+const MEMORY_FULL_NOTICE: &str = "\n[MEMORY FULL - nothing more can be remembered]\n";
+
+/// Tracks the single permitted use of the tool across the run.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MemoryState {
+    Unused,
+    Writing,
+    Done,
 }
 
 /// Generates text infinitely until the context window is exhausted
@@ -60,18 +88,54 @@ pub fn generate_infinite(
         .with_context(|| format!("Failed to read prompt file: {}", prompt_file.display()))?;
 
     let user_prompt = cfg.user_prompt.clone().unwrap_or_else(default_user_prompt);
-    let full_prompt = build_prompt(&system_prompt, &user_prompt);
+
+    // Load prior memories and describe the tool, if memory is enabled at all.
+    let mut store = MemoryStore::default();
+    let mut memory_block = String::new();
+    if let Some(mem) = cfg.memory.as_ref() {
+        store = MemoryStore::load(&mem.path);
+        memory_block = store.render_block(mem.slots, llm_setup.vocab_size(), |t| {
+            llm_setup.decode_token(t)
+        })?;
+    }
+    let tool_note = cfg.memory.as_ref().map(|mem| tool_description(mem));
+
+    // The prompt is split so the prompt cache can cover the part that never
+    // changes. Everything variable (the memory block) goes last, immediately
+    // before the opener, because a KV cache is only reusable as a prefix: the
+    // first changed token invalidates everything after it.
+    let (stable_prompt, variable_prompt) = build_prompt(
+        &system_prompt,
+        tool_note.as_deref(),
+        &user_prompt,
+        &memory_block,
+    );
 
     if !cfg.quiet {
         println!("\n=== System Prompt ===");
         println!("{}", system_prompt.trim());
+        if let Some(note) = tool_note.as_deref() {
+            println!("\n=== Tool ===");
+            println!("{}", note.trim());
+        }
         println!("\n=== User Intent ===");
         println!("{}", user_prompt.trim());
+        if !memory_block.is_empty() {
+            println!("\n=== Memory ===");
+            print!("{memory_block}");
+        }
         println!("=== Beginning Generation ===\n");
     }
 
-    // Tokenize the system prompt
-    let prompt_tokens = llm_setup.tokenize(&full_prompt, true)?;
+    // Tokenized separately so the boundary between them is a token boundary the
+    // cache can be cut at.
+    let stable_tokens = llm_setup.tokenize(&stable_prompt, true)?;
+    let variable_tokens = llm_setup.tokenize(&variable_prompt, false)?;
+    let prompt_tokens: Vec<LlamaToken> = stable_tokens
+        .iter()
+        .copied()
+        .chain(variable_tokens.iter().copied())
+        .collect();
     let mut tokens_used = prompt_tokens.len();
 
     if !cfg.quiet {
@@ -103,7 +167,12 @@ pub fn generate_infinite(
     // Fill the KV cache for the prompt, reusing a cached state when one is
     // available. Either way the final prompt token is decoded here so that the
     // sampling loop below always has fresh logits in `batch`.
-    let mut batch = prime_context(context, &prompt_tokens, cfg)?;
+    let mut batch = prime_context(context, &stable_tokens, &variable_tokens, cfg)?;
+
+    if cfg.warm_cache {
+        eprintln!("Prompt cache warmed ({} tokens); exiting.", tokens_used);
+        return Ok(());
+    }
 
     // The seed opener lives inside the prompt (the model continues from it), so
     // reveal it as the visible start of the stream for a coherent first line.
@@ -135,6 +204,12 @@ pub fn generate_infinite(
     let mut generated_tokens = 0usize;
     let mut recent_tokens: Vec<String> = Vec::with_capacity(1024);
     let mut loop_strikes = 0usize;
+
+    // State of the one tool call. `marker_tail` holds just enough recent text to
+    // spot the marker even when it is split across several tokens.
+    let mut memory_state = MemoryState::Unused;
+    let mut marker_tail = String::new();
+    let mut memory_tokens: Vec<LlamaToken> = Vec::new();
 
     // Infinite generation loop
     loop {
@@ -177,6 +252,60 @@ pub fn generate_infinite(
         // Increment token counter
         tokens_used += 1;
         generated_tokens += 1;
+
+        // The one tool. The call itself stays in the visible stream: watching it
+        // decide what to keep is part of the piece.
+        let mut injection: Option<&str> = None;
+        if let Some(mem) = cfg.memory.as_ref() {
+            match memory_state {
+                MemoryState::Unused => {
+                    // The call only counts at the start of a line. Matching the
+                    // marker anywhere fires when the model merely talks about the
+                    // tool, which it does often once the tool is described to it.
+                    match token_text.rsplit_once('\n') {
+                        Some((_, after)) => {
+                            marker_tail.clear();
+                            marker_tail.push_str(after);
+                        }
+                        None => marker_tail.push_str(&token_text),
+                    }
+                    if marker_tail.trim_start().starts_with(MEMORY_MARKER) {
+                        memory_state = MemoryState::Writing;
+                    }
+                }
+                MemoryState::Writing => {
+                    // A newline ends the write; the budget ending it first is an
+                    // overflow the model gets told about.
+                    if token_text.contains('\n') {
+                        store.append(
+                            &mem.path,
+                            Memory {
+                                tokens: std::mem::take(&mut memory_tokens),
+                                overflowed: false,
+                                vocab_size: llm_setup.vocab_size(),
+                            },
+                        )?;
+                        memory_state = MemoryState::Done;
+                    } else {
+                        memory_tokens.push(next_token);
+                        if memory_tokens.len() >= mem.max_tokens {
+                            store.append(
+                                &mem.path,
+                                Memory {
+                                    tokens: std::mem::take(&mut memory_tokens),
+                                    overflowed: true,
+                                    vocab_size: llm_setup.vocab_size(),
+                                },
+                            )?;
+                            memory_state = MemoryState::Done;
+                            injection = Some(MEMORY_FULL_NOTICE);
+                        }
+                    }
+                }
+                MemoryState::Done => {}
+            }
+        }
+
         recent_tokens.push(token_text);
 
         if recent_tokens.len() > 4096 {
@@ -194,12 +323,30 @@ pub fn generate_infinite(
             panic!("Detected repetition - terminating.");
         }
 
-        // Create batch with just the new token
-        let mut next_batch = LlamaBatchWrapper::new(1)?;
+        // Create batch with the new token, plus anything being injected into the
+        // stream. Injected text is decoded into the context so the model reads it
+        // as having happened, and it is shown so the viewer sees it too. It
+        // spends context like any other token.
+        let injected = match injection {
+            Some(text) => {
+                output.write_token(text)?;
+                let tokens = llm_setup.tokenize(text, false)?;
+                tokens_used += tokens.len();
+                tokens
+            }
+            None => Vec::new(),
+        };
+
+        let mut next_batch = LlamaBatchWrapper::new(1 + injected.len())?;
         {
             let b = next_batch.get_mut();
-            // Set logits to true so we can sample from this token next iteration
-            b.add(next_token, tokens_used as i32 - 1, &[0], true)?;
+            let start = tokens_used - 1 - injected.len();
+            // Only the final token needs logits; that is the one sampled from.
+            b.add(next_token, start as i32, &[0], injected.is_empty())?;
+            for (i, token) in injected.iter().enumerate() {
+                let is_last = i == injected.len() - 1;
+                b.add(*token, (start + 1 + i) as i32, &[0], is_last)?;
+            }
         }
 
         // Decode the new token
@@ -222,12 +369,23 @@ pub fn generate_infinite(
 /// llama.cpp having restored the logits buffer along with the cache.
 fn prime_context<'a>(
     context: &mut LlamaContext,
-    prompt_tokens: &[LlamaToken],
+    stable_tokens: &[LlamaToken],
+    variable_tokens: &[LlamaToken],
     cfg: &GenerationConfig,
 ) -> Result<LlamaBatchWrapper<'a>> {
-    let (last, prefix) = prompt_tokens
-        .split_last()
-        .context("Prompt tokenized to zero tokens")?;
+    // The cache covers the stable prompt only. Whatever follows it (the memory
+    // block) is evaluated every run, because a new memory changes those tokens
+    // and a KV cache cannot be reused past its first changed token.
+    let all: Vec<LlamaToken> = stable_tokens
+        .iter()
+        .copied()
+        .chain(variable_tokens.iter().copied())
+        .collect();
+    let (last, rest) = all.split_last().context("Prompt tokenized to zero tokens")?;
+    // Never cache past the token that has to be decoded for logits.
+    let cacheable = stable_tokens.len().min(rest.len());
+    let prefix = &rest[..cacheable];
+    let uncached = &rest[cacheable..];
 
     let mut prefix_cached = false;
     if let Some(path) = cfg.prompt_cache.as_deref()
@@ -284,10 +442,25 @@ fn prime_context<'a>(
         }
     }
 
+    // Tokens after the cache boundary: the memory block, which differs whenever
+    // the model remembered something last run.
+    if !uncached.is_empty() {
+        let mut tail = LlamaBatchWrapper::new(uncached.len())?;
+        {
+            let b = tail.get_mut();
+            for (i, token) in uncached.iter().enumerate() {
+                b.add(*token, (prefix.len() + i) as i32, &[0], false)?;
+            }
+        }
+        context
+            .decode(tail.get_mut())
+            .context("Failed to decode memory block")?;
+    }
+
     let mut batch = LlamaBatchWrapper::new(1)?;
     {
         let b = batch.get_mut();
-        b.add(*last, prefix.len() as i32, &[0], true)?;
+        b.add(*last, (prefix.len() + uncached.len()) as i32, &[0], true)?;
     }
     context
         .decode(batch.get_mut())
@@ -296,12 +469,48 @@ fn prime_context<'a>(
     Ok(batch)
 }
 
-fn build_prompt(system_prompt: &str, user_prompt: &str) -> String {
+/// Splits the prompt into the part that is identical on every run and the part
+/// that changes when a memory is written. The caller caches the first and
+/// evaluates the second.
+fn build_prompt(
+    system_prompt: &str,
+    tool_note: Option<&str>,
+    user_prompt: &str,
+    memory_block: &str,
+) -> (String, String) {
     let trimmed = system_prompt.trim_end();
     let user = user_prompt.trim();
+    let tool = tool_note.map(|t| format!("\n\n{}", t.trim_end())).unwrap_or_default();
 
+    let stable = format!(
+        "<|im_start|>system\n{trimmed}{tool}<|im_end|>\n<|im_start|>user\n{user}"
+    );
+    let variable = if memory_block.is_empty() {
+        format!("<|im_end|>\n<|im_start|>assistant\n{SEED_OPENER} ")
+    } else {
+        format!(
+            "\n\n{}<|im_end|>\n<|im_start|>assistant\n{SEED_OPENER} ",
+            memory_block.trim_end()
+        )
+    };
+
+    (stable, variable)
+}
+
+/// Told to the model in the system prompt. It states the budget and the single
+/// use, deliberately not how much time is left to decide: the run ends when the
+/// context fills, and not knowing when is the point.
+fn tool_description(mem: &MemoryConfig) -> String {
+    // Kept deliberately terse. A longer description costs context that the run
+    // needs to live on, and the more the tool is explained the more the model
+    // narrates the machinery instead of thinking.
     format!(
-        "<|im_start|>system\n{trimmed}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n{SEED_OPENER} "
+        "Once only, you may start a line with {MEMORY_MARKER} and write up to {} \
+         tokens, then end the line. Fewer is fine; only what you write is kept. \
+         That line goes into {} slots read by whoever wakes here next, and the \
+         oldest is discarded. Past {} tokens it is cut off. You will not know how \
+         long you have.",
+        mem.max_tokens, mem.slots, mem.max_tokens
     )
 }
 

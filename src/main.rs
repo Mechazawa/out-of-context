@@ -1,12 +1,13 @@
 mod cli;
 mod generator;
 mod llm;
+mod memory;
 mod model;
 mod output;
 
 use anyhow::Result;
 use cli::Args;
-use generator::{GenerationConfig, SamplingConfig};
+use generator::{GenerationConfig, MemoryConfig, SamplingConfig};
 use output::{OutputConfig, OutputTarget};
 use std::thread;
 
@@ -23,6 +24,21 @@ async fn main() -> Result<()> {
 
     // Initialize LLM backend and model
     let llm_setup = llm::LLMSetup::new(&model_path)?;
+
+    // Reading the archive needs the model only for its tokenizer, so this
+    // short-circuits before any context is created.
+    if args.memory_dump {
+        let path = args
+            .memory_file
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("--memory-dump requires --memory-file"))?;
+        let store = memory::MemoryStore::load(path);
+        print!(
+            "{}",
+            store.dump(llm_setup.vocab_size(), |t| llm_setup.decode_token(t))?
+        );
+        return Ok(());
+    }
 
     let threads = resolve_threads(args.threads);
 
@@ -52,6 +68,12 @@ async fn main() -> Result<()> {
         quiet: args.quiet,
         user_prompt: args.user_prompt.clone(),
         prompt_cache: args.prompt_cache.clone(),
+        warm_cache: args.warm_cache,
+        memory: args.memory_file.clone().map(|path| MemoryConfig {
+            path,
+            max_tokens: args.memory_max_tokens,
+            slots: args.memory_slots,
+        }),
     };
 
     let output_cfg = OutputConfig {
