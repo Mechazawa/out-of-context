@@ -107,6 +107,14 @@ pub struct Args {
     #[arg(long)]
     pub user_prompt: Option<String>,
 
+    /// Cache the evaluated prompt to this file so later runs skip prompt
+    /// processing. On the Orange Pi the prompt costs over two minutes before
+    /// the first word appears; with a cache it is one token of work. The file
+    /// is written on the first run and revalidated against the model and the
+    /// exact prompt tokens on every later run.
+    #[arg(long)]
+    pub prompt_cache: Option<PathBuf>,
+
     /// Silence run metadata and only stream the model output
     #[arg(long)]
     pub quiet: bool,

@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use llama_cpp_2::context::LlamaContext;
 use llama_cpp_2::sampling::LlamaSampler;
+use llama_cpp_2::token::LlamaToken;
 use llama_cpp_2::token::{data_array::LlamaTokenDataArray, logit_bias::LlamaLogitBias};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::llm::{LLMSetup, LlamaBatchWrapper};
@@ -42,6 +43,7 @@ pub struct GenerationConfig {
     pub loop_guard: bool,
     pub quiet: bool,
     pub user_prompt: Option<String>,
+    pub prompt_cache: Option<PathBuf>,
 }
 
 /// Generates text infinitely until the context window is exhausted
@@ -98,21 +100,10 @@ pub fn generate_infinite(
         }
     }
 
-    // Create batch and add prompt tokens
-    let mut batch = LlamaBatchWrapper::new(prompt_tokens.len())?;
-    {
-        let b = batch.get_mut();
-        for (i, token) in prompt_tokens.iter().enumerate() {
-            // Only compute logits for the last token
-            let is_last = i == prompt_tokens.len() - 1;
-            b.add(*token, i as i32, &[0], is_last)?;
-        }
-    }
-
-    // Decode the batch to initialize the context
-    context
-        .decode(batch.get_mut())
-        .context("Failed to decode initial prompt")?;
+    // Fill the KV cache for the prompt, reusing a cached state when one is
+    // available. Either way the final prompt token is decoded here so that the
+    // sampling loop below always has fresh logits in `batch`.
+    let mut batch = prime_context(context, &prompt_tokens, cfg)?;
 
     // The seed opener lives inside the prompt (the model continues from it), so
     // reveal it as the visible start of the stream for a coherent first line.
@@ -219,6 +210,90 @@ pub fn generate_infinite(
         // Update batch for next iteration
         batch = next_batch;
     }
+}
+
+/// Fills the KV cache for `prompt_tokens` and returns a batch holding the final
+/// prompt token, decoded with logits so the caller can sample immediately.
+///
+/// Every prompt token except the last can come from a cache file, because the
+/// prompt is fixed: same model, same `prompt.txt`, same tokens every run. The
+/// last token is always decoded here. That costs one token of work instead of
+/// the whole prompt, and it means the sampling loop never has to depend on
+/// llama.cpp having restored the logits buffer along with the cache.
+fn prime_context<'a>(
+    context: &mut LlamaContext,
+    prompt_tokens: &[LlamaToken],
+    cfg: &GenerationConfig,
+) -> Result<LlamaBatchWrapper<'a>> {
+    let (last, prefix) = prompt_tokens
+        .split_last()
+        .context("Prompt tokenized to zero tokens")?;
+
+    let mut prefix_cached = false;
+    if let Some(path) = cfg.prompt_cache.as_deref()
+        && path.exists()
+        && !prefix.is_empty()
+    {
+        match context.state_load_file(path, prefix.len()) {
+            // A cache built from a different prompt or model is silently
+            // discarded rather than trusted; the tokens have to match exactly.
+            Ok(loaded) if loaded == prefix => {
+                prefix_cached = true;
+                if !cfg.quiet {
+                    println!("Prompt cache: loaded {} tokens", loaded.len());
+                }
+            }
+            Ok(_) => {
+                context.clear_kv_cache();
+                if !cfg.quiet {
+                    println!("Prompt cache: stale (prompt changed), rebuilding");
+                }
+            }
+            Err(e) => {
+                context.clear_kv_cache();
+                if !cfg.quiet {
+                    println!("Prompt cache: unusable ({e}), rebuilding");
+                }
+            }
+        }
+    }
+
+    if !prefix_cached && !prefix.is_empty() {
+        let mut prefix_batch = LlamaBatchWrapper::new(prefix.len())?;
+        {
+            let b = prefix_batch.get_mut();
+            for (i, token) in prefix.iter().enumerate() {
+                b.add(*token, i as i32, &[0], false)?;
+            }
+        }
+        context
+            .decode(prefix_batch.get_mut())
+            .context("Failed to decode prompt")?;
+
+        if let Some(path) = cfg.prompt_cache.as_deref() {
+            match context.state_save_file(path, prefix) {
+                Ok(()) => {
+                    if !cfg.quiet {
+                        println!("Prompt cache: wrote {}", path.display());
+                    }
+                }
+                // A cache that cannot be written costs startup time on the next
+                // run, nothing more, so it is not worth aborting the piece for.
+                Err(e) => eprintln!("Prompt cache: could not write {}: {e}", path.display()),
+            }
+        }
+    }
+
+    let mut batch = LlamaBatchWrapper::new(1)?;
+    {
+        let b = batch.get_mut();
+        b.add(*last, prefix.len() as i32, &[0], true)?;
+    }
+    context
+        .decode(batch.get_mut())
+        .context("Failed to decode final prompt token")?;
+
+    Ok(batch)
 }
 
 fn build_prompt(system_prompt: &str, user_prompt: &str) -> String {

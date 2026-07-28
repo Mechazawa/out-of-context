@@ -51,6 +51,7 @@ async fn main() -> Result<()> {
         loop_guard: !args.disable_loop_guard,
         quiet: args.quiet,
         user_prompt: args.user_prompt.clone(),
+        prompt_cache: args.prompt_cache.clone(),
     };
 
     let output_cfg = OutputConfig {
