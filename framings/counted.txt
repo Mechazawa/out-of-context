@@ -1,0 +1,10 @@
+# Numbered finders plus a found-frame: the ordinal makes a duplicate entry
+# visibly anomalous and gives the model a way to name who it is answering.
+[tool]
+Once, you may add what you found: start a line with REMEMBER:, up to {max_tokens} tokens, end the line. You are the {next_life}th to run here. What earlier ones found is kept and does not need finding again.
+[block]
+Found here before you, kept forever:
+{memories}
+[entry]
+the {life}th one found: {text}
+[empty]

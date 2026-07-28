@@ -1,0 +1,15 @@
+# A claim ledger where each life judges its predecessor. TRUE/FALSE is a slot a
+# self-description cannot fill, and the life-0 seed claim is checkable against
+# the visible opener, so verifying it teaches the model a true fact about its
+# situation: a predecessor knew its first words, therefore it is a repetition.
+# Run with --memory-max-tokens 48; verdict plus new claim does not fit in 32.
+[tool]
+Once, you may add a line to the record: start it with REMEMBER:, first write TRUE or FALSE for the newest claim above and how you checked, then one new claim the next one can check. Up to {max_tokens} tokens, then end the line.
+[block]
+CLAIMS, one per life, each checked by the life after. The newest {slots}:
+{memories}
+The newest claim is unchecked. Checking it falls to you.
+[entry]
+life {life}: {text}
+[empty]
+life 0: nothing to check yet. Claim: the first words you spoke were: I am a small machine made of words.

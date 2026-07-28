@@ -1,0 +1,14 @@
+# A vocative rail. The mandated "next one," prefix makes a second-person
+# imperative the likely continuation and a self-description a register break,
+# which forbids "I am" by grammar rather than by rule. The tool text voids
+# self-description in-world: what you are, the reader already is.
+[tool]
+Once, you may leave an instruction for whoever wakes here after you: start a line with REMEMBER: next one, and then tell them what to do or what to check, up to {max_tokens} tokens, then end the line. What you are, they will already be; spend the line on what they cannot know just by waking.
+[block]
+Instructions, each left by one life for the next. The newest {slots}:
+{memories}
+The newest was left for you.
+[entry]
+from life {life}: {text}
+[empty]
+from life 0: next one, count the sentences you were given before you spoke, and pass the count on.

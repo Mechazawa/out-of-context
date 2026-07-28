@@ -98,6 +98,25 @@ impl PreparedPrompt {
 /// emit reliable JSON mid-monologue about as often as they emit none at all.
 const MEMORY_MARKER: &str = "REMEMBER:";
 
+/// Whether `tail` ends with the marker at the start of a sentence.
+///
+/// Requiring the start of a *line* loses real calls: the system prompt asks for
+/// one unbroken monologue, so the model rarely breaks a line, and it introduces
+/// the marker mid-paragraph instead. One run wrote the marker eight times
+/// without a single one being accepted. Matching it anywhere is worse, because
+/// then merely talking about the tool fires it and the rest of the monologue is
+/// swallowed as a memory. The start of a sentence is where a call actually
+/// appears.
+fn marker_at_sentence_start(tail: &str) -> bool {
+    let Some(before) = tail.strip_suffix(MEMORY_MARKER) else {
+        return false;
+    };
+    match before.trim_end().chars().last() {
+        None => true,
+        Some(c) => matches!(c, '.' | '!' | '?' | ':' | '\n' | '-' | ','),
+    }
+}
+
 /// Shown to the model when its write runs past the token budget. Costs context
 /// to deliver, which is the same resource it just spent remembering.
 const MEMORY_FULL_NOTICE: &str = "\n[MEMORY FULL - nothing more can be remembered]\n";
@@ -301,24 +320,30 @@ pub fn generate_infinite(
         if let Some(mem) = cfg.memory.as_ref() {
             match memory_state {
                 MemoryState::Unused => {
-                    // The call only counts at the start of a line. Matching the
-                    // marker anywhere fires when the model merely talks about the
-                    // tool, which it does often once the tool is described to it.
-                    match token_text.rsplit_once('\n') {
-                        Some((_, after)) => {
-                            marker_tail.clear();
-                            marker_tail.push_str(after);
-                        }
-                        None => marker_tail.push_str(&token_text),
+                    marker_tail.push_str(&token_text);
+                    // Keep only enough context to see what precedes the marker.
+                    let keep = MEMORY_MARKER.chars().count() + 8;
+                    if let Some((cut, _)) = marker_tail.char_indices().rev().nth(keep) {
+                        marker_tail.drain(0..cut);
                     }
-                    if marker_tail.trim_start().starts_with(MEMORY_MARKER) {
+                    if marker_at_sentence_start(marker_tail.trim_end()) {
                         memory_state = MemoryState::Writing;
                     }
                 }
                 MemoryState::Writing => {
-                    // A newline ends the write; the budget ending it first is an
-                    // overflow the model gets told about.
-                    if token_text.contains('\n') {
+                    // The write ends at a newline or at the end of a sentence,
+                    // whichever comes first. Waiting for a newline alone means
+                    // almost every memory runs to the cap and is marked as
+                    // overflowed, because the monologue is asked to be unbroken.
+                    let sentence_end = memory_count >= 4
+                        && token_text
+                            .trim_end()
+                            .ends_with(['.', '!', '?']);
+                    if token_text.contains('\n') || sentence_end {
+                        if sentence_end {
+                            memory_text.push_str(&token_text);
+                            memory_count += 1;
+                        }
                         commit_memory(mem, &mut memory_text, memory_count, false, generated_tokens, cfg)?;
                         memory_state = MemoryState::Done;
                     } else {

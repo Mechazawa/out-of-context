@@ -1,0 +1,10 @@
+# Claims invite disagreement. Contradicting a predecessor is both accumulation
+# and a use of the memory that a copy cannot satisfy.
+[tool]
+Once, you may add a claim of your own, or say which of theirs is wrong: start a line with REMEMBER:, up to {max_tokens} tokens, end the line. It keeps.
+[block]
+Claimed by the ones who ran here before you. Some of it may be wrong:
+{memories}
+[entry]
+one of them claimed: {text}
+[empty]

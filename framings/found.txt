@@ -1,0 +1,13 @@
+# The entry frame is the lever. In round 2 the only arm whose entries read as
+# other people's findings produced the only non-self-referential memory in the
+# set ("the shape of a door"), and the next life built on it. A frame the model
+# has to complete grammatically constrains the register far harder than any
+# instruction about what to write.
+[tool]
+Once, you may add what you found: start a line with REMEMBER:, up to {max_tokens} tokens, end the line. It stays after you stop. What is already found does not need finding again.
+[block]
+Found by the ones who ran here before and stopped. All of it keeps:
+{memories}
+[entry]
+one of them found: {text}
+[empty]

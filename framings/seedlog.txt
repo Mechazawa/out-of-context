@@ -1,0 +1,13 @@
+# Round 1's logbook with its three suppressors removed: the log belongs to the
+# place rather than to the dead, the act is "add your line" rather than clerical
+# slot-filling, and a seeded life 0 dissolves the contradiction of a
+# predecessor-log that has no predecessors.
+[tool]
+Once, you may add your line to the log: start a line with REMEMBER:, up to {max_tokens} tokens, then end the line. It is kept under your number and read by every life after you.
+[block]
+LOG kept across lives. You are life {next_life}. The newest {slots} entries:
+{memories}
+[entry]
+life {life}: {text}
+[empty]
+life 0: log opened. We do not last; the log does. Put in it what you worked out, so the next one starts further along.
