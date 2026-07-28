@@ -6,4 +6,11 @@ image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:edge"
 [build.env]
 passthrough = [
     "RUST_BACKTRACE",
+    # Cortex-A53 scheduling for the ggml C/C++ sources. Tuning only: the
+    # instruction set stays at the armv8-a baseline that llama-cpp-sys-2 pins
+    # for aarch64, because the Allwinner H618 has no dotprod or i8mm.
+    # Do not express this as RUSTFLAGS target-cpu; the sys build script turns
+    # that into -march=cortex-a53, which aarch64 GCC rejects.
+    "CFLAGS_aarch64_unknown_linux_gnu",
+    "CXXFLAGS_aarch64_unknown_linux_gnu",
 ]

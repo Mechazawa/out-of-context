@@ -110,7 +110,9 @@ impl LLMSetup {
     /// markup tokens (e.g. "<br", "</i>") that web/code-trained models emit.
     pub fn tokens_containing(&self, ch: char) -> Vec<LlamaToken> {
         self.model
-            .tokens(Special::Plaintext)
+            // `false` = do not render control tokens; they are banned by name
+            // elsewhere, so this scan only needs the plaintext vocabulary.
+            .tokens(false)
             .filter_map(|(token, text)| match text {
                 Ok(text) if text.contains(ch) => Some(token),
                 _ => None,
