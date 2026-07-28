@@ -21,6 +21,14 @@ pub struct LLMSetup {
 impl LLMSetup {
     /// Initialize the LLM backend and load the model
     pub fn new(model_path: &Path) -> Result<Self> {
+        Self::with_gpu_layers(model_path, 0)
+    }
+
+    /// `gpu_layers` is a development convenience for iterating on prompts and
+    /// framings quickly. The target board has no usable GPU, so a deployed run
+    /// always passes 0, and offloading needs the `vulkan` cargo feature to do
+    /// anything at all.
+    pub fn with_gpu_layers(model_path: &Path, gpu_layers: u32) -> Result<Self> {
         // Silence llama.cpp's verbose internal logging so the only thing on the
         // terminal is the model's stream of consciousness. (Routes logs to
         // tracing with logging disabled, i.e. dropped.)
@@ -34,7 +42,7 @@ impl LLMSetup {
         // Configure model parameters for memory efficiency
         // Note: mmap is enabled by default in llama.cpp
         let model_params = LlamaModelParams::default()
-            .with_n_gpu_layers(0) // CPU only (no GPU on Pi)
+            .with_n_gpu_layers(gpu_layers)
             .with_use_mlock(false); // Don't lock model in RAM
 
         println!("Loading model from: {}", model_path.display());

@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
     let model_path = model::resolve_model(&args.model, &args.model_dir).await?;
 
     // Initialize LLM backend and model
-    let llm_setup = llm::LLMSetup::new(&model_path)?;
+    let llm_setup = llm::LLMSetup::with_gpu_layers(&model_path, args.gpu_layers)?;
 
     let threads = resolve_threads(args.threads);
 

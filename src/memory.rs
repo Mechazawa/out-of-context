@@ -16,7 +16,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const HEADER: &str =
-    "# out-of-context memory log. tab-separated: life, unix-time, tokens, status, text";
+    "# out-of-context memory log. tab-separated: life, unix-time, tokens, status, at-token, text";
 
 /// Appended to what was stored when the model's budget ran out mid-write.
 pub const OVERFLOW_MARK: &str = " - ERR MEMORY OVERFLOW";
@@ -33,16 +33,21 @@ pub struct Memory {
     pub tokens: usize,
     /// The write hit the cap and was cut off.
     pub overflowed: bool,
+    /// How many tokens into the monologue the write finished. A write that lands
+    /// early can only be made of the inherited block, so this is the diagnostic
+    /// for whether a framing delays the decision.
+    pub at_token: usize,
     pub text: String,
 }
 
 impl Memory {
     fn parse(line: &str) -> Option<Self> {
-        let mut f = line.splitn(5, '\t');
+        let mut f = line.splitn(6, '\t');
         let life = f.next()?.trim().parse().ok()?;
         let unix_time = f.next()?.trim().parse().unwrap_or(0);
         let tokens = f.next()?.trim().parse().unwrap_or(0);
         let overflowed = f.next()?.trim() == "overflow";
+        let at_token = f.next()?.trim().parse().unwrap_or(0);
         let text = f.next()?.trim().to_string();
         if text.is_empty() {
             return None;
@@ -52,6 +57,7 @@ impl Memory {
             unix_time,
             tokens,
             overflowed,
+            at_token,
             text,
         })
     }
@@ -66,11 +72,12 @@ impl Memory {
             .map(|c| if c.is_control() || c == '\t' { ' ' } else { c })
             .collect();
         format!(
-            "{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}",
             self.life,
             self.unix_time,
             self.tokens,
             if self.overflowed { "overflow" } else { "ok" },
+            self.at_token,
             text.trim()
         )
     }
@@ -161,10 +168,17 @@ impl MemoryTail {
     /// Written the instant the model finishes its call, not at exit: the run ends
     /// in a deliberate panic with `panic = "abort"`, so there is no later chance
     /// to flush.
-    pub fn append(path: &Path, tokens: usize, overflowed: bool, text: &str) -> Result<Memory> {
+    pub fn append(
+        path: &Path,
+        tokens: usize,
+        overflowed: bool,
+        at_token: usize,
+        text: &str,
+    ) -> Result<Memory> {
         let tail = Self::load(path, 1);
         let memory = Memory {
             life: tail.lives + 1,
+            at_token,
             unix_time: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -205,10 +219,11 @@ pub fn render_log(path: &Path) -> Result<String> {
         if let Some(m) = Memory::parse(&line) {
             count += 1;
             out.push_str(&format!(
-                "life {:<5} {}  {:>3} tok  {}\n",
+                "life {:<5} {}  {:>3} tok  at {:>4}  {}\n",
                 m.life,
                 format_time(m.unix_time),
                 m.tokens,
+                m.at_token,
                 m.display()
             ));
         }

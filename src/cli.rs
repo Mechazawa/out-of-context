@@ -158,6 +158,12 @@ pub struct Args {
     #[arg(long, default_value_t = 4)]
     pub prompt_cache_keep: usize,
 
+    /// Offload this many layers to a GPU. Development aid only: it needs the
+    /// `vulkan` cargo feature, and the Orange Pi has no backend that can use it.
+    /// Use a large number (99) to offload everything.
+    #[arg(long, default_value_t = 0)]
+    pub gpu_layers: u32,
+
     /// Silence run metadata and only stream the model output
     #[arg(long)]
     pub quiet: bool,

@@ -117,7 +117,15 @@ impl Framing {
     }
 
     /// The memory block that goes last in the prompt.
+    ///
+    /// A framing whose `[empty]` section is blank shows no block at all until
+    /// something has been remembered. That matters: on a fresh log the empty
+    /// text is the only memory-shaped line in context, and the model copies it
+    /// verbatim as its first memory.
     pub fn block(&self, memories: &[Memory], slots: usize, lives: u64) -> String {
+        if memories.is_empty() && self.empty.trim().is_empty() {
+            return String::new();
+        }
         let rendered = if memories.is_empty() {
             self.empty.clone()
         } else {

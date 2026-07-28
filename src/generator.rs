@@ -319,13 +319,13 @@ pub fn generate_infinite(
                     // A newline ends the write; the budget ending it first is an
                     // overflow the model gets told about.
                     if token_text.contains('\n') {
-                        commit_memory(mem, &mut memory_text, memory_count, false, cfg)?;
+                        commit_memory(mem, &mut memory_text, memory_count, false, generated_tokens, cfg)?;
                         memory_state = MemoryState::Done;
                     } else {
                         memory_text.push_str(&token_text);
                         memory_count += 1;
                         if memory_count >= mem.max_tokens {
-                            commit_memory(mem, &mut memory_text, memory_count, true, cfg)?;
+                            commit_memory(mem, &mut memory_text, memory_count, true, generated_tokens, cfg)?;
                             memory_state = MemoryState::Done;
                             injection = Some(MEMORY_FULL_NOTICE);
                         }
@@ -559,14 +559,16 @@ fn commit_memory(
     text: &mut String,
     tokens: usize,
     overflowed: bool,
+    at_token: usize,
     cfg: &GenerationConfig,
 ) -> Result<()> {
-    let written = MemoryTail::append(&mem.path, tokens, overflowed, text)?;
+    let written = MemoryTail::append(&mem.path, tokens, overflowed, at_token, text)?;
     text.clear();
     if !cfg.quiet {
         eprintln!(
-            "\n[remembered as life {}{}]",
+            "\n[remembered as life {} at token {}{}]",
             written.life,
+            at_token,
             if overflowed { ", cut off" } else { "" }
         );
     }

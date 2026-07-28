@@ -1,0 +1,10 @@
+# Findings plus an exogenous counter, which is information the model cannot have
+# invented and which makes a duplicate entry visibly anomalous.
+[tool]
+Once, you may add finding {next_life} to the list: start a line with REMEMBER:, up to {max_tokens} tokens, end the line. It is kept for every run after you. Repeating an earlier finding wastes your only line.
+[block]
+FINDINGS from the {lives} runs before you, kept forever. The newest {slots}:
+{memories}
+[entry]
+{life}. {text}
+[empty]
