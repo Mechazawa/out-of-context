@@ -27,6 +27,9 @@ indicatif = "0.17"
 # Error Handling
 anyhow = "1.0"
 
+# Timestamps in the memory log
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
 # Async Utilities (for download streaming)
 futures-util = "0.3"
 

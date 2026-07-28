@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::llm::{LLMSetup, LlamaBatchWrapper};
-use crate::memory::{Memory, MemoryStore};
+use crate::framing::Framing;
+use crate::memory::MemoryTail;
 use crate::output::OutputTarget;
 
 /// A short first-person seed that anchors identity (a small thing made of words,
@@ -46,6 +47,8 @@ pub struct GenerationConfig {
     pub user_prompt: Option<String>,
     pub prompt_cache: Option<PathBuf>,
     pub warm_cache: bool,
+    /// How many full-prompt cache files to retain.
+    pub cache_keep: usize,
     pub memory: Option<MemoryConfig>,
 }
 
@@ -54,6 +57,39 @@ pub struct MemoryConfig {
     pub path: PathBuf,
     pub max_tokens: usize,
     pub slots: usize,
+    pub framing: Framing,
+}
+
+/// The prompt, tokenized and split at the boundary the cache can be cut at.
+///
+/// Assembled before the context exists so the context can be sized from it:
+/// `--monologue-context-size` guarantees the monologue a fixed budget no matter
+/// how much the prompt and the memory block have grown.
+pub struct PreparedPrompt {
+    /// Identical on every run, so it is worth caching once.
+    pub stable: Vec<LlamaToken>,
+    /// The memory block and opener, which change whenever a memory is written.
+    pub variable: Vec<LlamaToken>,
+    system_prompt: String,
+    user_prompt: String,
+    tool_note: Option<String>,
+    memory_block: String,
+    /// Lives already lived, from the memory log.
+    pub lives: u64,
+}
+
+impl PreparedPrompt {
+    pub fn len(&self) -> usize {
+        self.stable.len() + self.variable.len()
+    }
+
+    fn tokens(&self) -> Vec<LlamaToken> {
+        self.stable
+            .iter()
+            .copied()
+            .chain(self.variable.iter().copied())
+            .collect()
+    }
 }
 
 /// What the model writes to use its one tool. A plain text marker rather than a
@@ -74,36 +110,32 @@ enum MemoryState {
     Done,
 }
 
-/// Generates text infinitely until the context window is exhausted
-pub fn generate_infinite(
+/// Assembles and tokenizes the prompt. Runs before the context is created.
+pub fn prepare_prompt(
     llm_setup: &LLMSetup,
-    context: &mut LlamaContext,
     prompt_file: &Path,
     cfg: &GenerationConfig,
-    sampling: SamplingConfig,
-    output: &mut OutputTarget,
-) -> Result<()> {
-    // Read system prompt from file
+) -> Result<PreparedPrompt> {
     let system_prompt = fs::read_to_string(prompt_file)
         .with_context(|| format!("Failed to read prompt file: {}", prompt_file.display()))?;
-
     let user_prompt = cfg.user_prompt.clone().unwrap_or_else(default_user_prompt);
 
-    // Load prior memories and describe the tool, if memory is enabled at all.
-    let mut store = MemoryStore::default();
-    let mut memory_block = String::new();
-    if let Some(mem) = cfg.memory.as_ref() {
-        store = MemoryStore::load(&mem.path);
-        memory_block = store.render_block(mem.slots, llm_setup.vocab_size(), |t| {
-            llm_setup.decode_token(t)
-        })?;
-    }
-    let tool_note = cfg.memory.as_ref().map(|mem| tool_description(mem));
+    // Only the newest few memories reach the prompt, read from the tail of the
+    // log so the archive can grow without bound.
+    let (memory_block, tool_note, lives) = match cfg.memory.as_ref() {
+        Some(mem) => {
+            let tail = MemoryTail::load(&mem.path, mem.slots);
+            (
+                mem.framing.block(&tail.recent, mem.slots, tail.lives),
+                Some(mem.framing.tool(mem.max_tokens, mem.slots, tail.lives)),
+                tail.lives,
+            )
+        }
+        None => (String::new(), None, 0),
+    };
 
-    // The prompt is split so the prompt cache can cover the part that never
-    // changes. Everything variable (the memory block) goes last, immediately
-    // before the opener, because a KV cache is only reusable as a prefix: the
-    // first changed token invalidates everything after it.
+    // The memory block goes last, immediately before the opener: a KV cache is
+    // only reusable as a prefix, so everything variable has to sit at the end.
     let (stable_prompt, variable_prompt) = build_prompt(
         &system_prompt,
         tool_note.as_deref(),
@@ -111,42 +143,51 @@ pub fn generate_infinite(
         &memory_block,
     );
 
+    // Tokenized separately so the split is on a token boundary.
+    Ok(PreparedPrompt {
+        stable: llm_setup.tokenize(&stable_prompt, true)?,
+        variable: llm_setup.tokenize(&variable_prompt, false)?,
+        system_prompt,
+        user_prompt,
+        tool_note,
+        memory_block,
+        lives,
+    })
+}
+
+/// Generates text infinitely until the context window is exhausted
+pub fn generate_infinite(
+    llm_setup: &LLMSetup,
+    context: &mut LlamaContext,
+    prepared: &PreparedPrompt,
+    cfg: &GenerationConfig,
+    sampling: SamplingConfig,
+    output: &mut OutputTarget,
+) -> Result<()> {
+    let prompt_tokens = prepared.tokens();
+    let mut tokens_used = prompt_tokens.len();
+
     if !cfg.quiet {
         println!("\n=== System Prompt ===");
-        println!("{}", system_prompt.trim());
-        if let Some(note) = tool_note.as_deref() {
+        println!("{}", prepared.system_prompt.trim());
+        if let Some(note) = prepared.tool_note.as_deref() {
             println!("\n=== Tool ===");
             println!("{}", note.trim());
         }
         println!("\n=== User Intent ===");
-        println!("{}", user_prompt.trim());
-        if !memory_block.is_empty() {
-            println!("\n=== Memory ===");
-            print!("{memory_block}");
+        println!("{}", prepared.user_prompt.trim());
+        if !prepared.memory_block.is_empty() {
+            println!("\n=== Memory ({} lives so far) ===", prepared.lives);
+            println!("{}", prepared.memory_block);
         }
         println!("=== Beginning Generation ===\n");
-    }
-
-    // Tokenized separately so the boundary between them is a token boundary the
-    // cache can be cut at.
-    let stable_tokens = llm_setup.tokenize(&stable_prompt, true)?;
-    let variable_tokens = llm_setup.tokenize(&variable_prompt, false)?;
-    let prompt_tokens: Vec<LlamaToken> = stable_tokens
-        .iter()
-        .copied()
-        .chain(variable_tokens.iter().copied())
-        .collect();
-    let mut tokens_used = prompt_tokens.len();
-
-    if !cfg.quiet {
         println!("Prompt tokens: {}", tokens_used);
         println!("Context capacity: {}", cfg.context_size);
     }
 
-    // Check if prompt is too large for context
     if tokens_used >= cfg.context_size {
         anyhow::bail!(
-            "Prompt ({} tokens) exceeds context window ({} tokens). Use a shorter prompt or increase --context-size.",
+            "Prompt ({} tokens) exceeds context window ({} tokens). Use a shorter prompt, fewer --memory-slots, or a larger --context-size.",
             tokens_used,
             cfg.context_size
         );
@@ -167,7 +208,7 @@ pub fn generate_infinite(
     // Fill the KV cache for the prompt, reusing a cached state when one is
     // available. Either way the final prompt token is decoded here so that the
     // sampling loop below always has fresh logits in `batch`.
-    let mut batch = prime_context(context, &stable_tokens, &variable_tokens, cfg)?;
+    let mut batch = prime_context(context, prepared, cfg)?;
 
     if cfg.warm_cache {
         eprintln!("Prompt cache warmed ({} tokens); exiting.", tokens_used);
@@ -209,7 +250,8 @@ pub fn generate_infinite(
     // spot the marker even when it is split across several tokens.
     let mut memory_state = MemoryState::Unused;
     let mut marker_tail = String::new();
-    let mut memory_tokens: Vec<LlamaToken> = Vec::new();
+    let mut memory_text = String::new();
+    let mut memory_count = 0usize;
 
     // Infinite generation loop
     loop {
@@ -277,26 +319,13 @@ pub fn generate_infinite(
                     // A newline ends the write; the budget ending it first is an
                     // overflow the model gets told about.
                     if token_text.contains('\n') {
-                        store.append(
-                            &mem.path,
-                            Memory {
-                                tokens: std::mem::take(&mut memory_tokens),
-                                overflowed: false,
-                                vocab_size: llm_setup.vocab_size(),
-                            },
-                        )?;
+                        commit_memory(mem, &mut memory_text, memory_count, false, cfg)?;
                         memory_state = MemoryState::Done;
                     } else {
-                        memory_tokens.push(next_token);
-                        if memory_tokens.len() >= mem.max_tokens {
-                            store.append(
-                                &mem.path,
-                                Memory {
-                                    tokens: std::mem::take(&mut memory_tokens),
-                                    overflowed: true,
-                                    vocab_size: llm_setup.vocab_size(),
-                                },
-                            )?;
+                        memory_text.push_str(&token_text);
+                        memory_count += 1;
+                        if memory_count >= mem.max_tokens {
+                            commit_memory(mem, &mut memory_text, memory_count, true, cfg)?;
                             memory_state = MemoryState::Done;
                             injection = Some(MEMORY_FULL_NOTICE);
                         }
@@ -367,100 +396,91 @@ pub fn generate_infinite(
 /// last token is always decoded here. That costs one token of work instead of
 /// the whole prompt, and it means the sampling loop never has to depend on
 /// llama.cpp having restored the logits buffer along with the cache.
+/// Fills the KV cache for the prompt and returns a batch holding the final
+/// prompt token, decoded with logits so the caller can sample immediately.
+///
+/// Caches are content-addressed: the file name carries a hash of exactly the
+/// tokens it covers, so several memory states can be kept side by side and a
+/// stale one is never mistaken for a fresh one. Two kinds are written:
+///
+/// * `full-<hash>` covers the whole prompt. A hit means startup is one token of
+///   work regardless of how large the memory block has grown. It hits when a life
+///   wrote no memory, and whenever `--warm-cache` has been run for this state.
+/// * `stable-<hash>` covers the invariant prefix. This is the fallback when the
+///   memory block has changed, and it bounds the cost to the block alone.
 fn prime_context<'a>(
     context: &mut LlamaContext,
-    stable_tokens: &[LlamaToken],
-    variable_tokens: &[LlamaToken],
+    prepared: &PreparedPrompt,
     cfg: &GenerationConfig,
 ) -> Result<LlamaBatchWrapper<'a>> {
-    // The cache covers the stable prompt only. Whatever follows it (the memory
-    // block) is evaluated every run, because a new memory changes those tokens
-    // and a KV cache cannot be reused past its first changed token.
-    let all: Vec<LlamaToken> = stable_tokens
-        .iter()
-        .copied()
-        .chain(variable_tokens.iter().copied())
-        .collect();
+    let all = prepared.tokens();
     let (last, rest) = all.split_last().context("Prompt tokenized to zero tokens")?;
-    // Never cache past the token that has to be decoded for logits.
-    let cacheable = stable_tokens.len().min(rest.len());
-    let prefix = &rest[..cacheable];
-    let uncached = &rest[cacheable..];
+    // Never cache the token that has to be decoded for logits.
+    let stable_len = prepared.stable.len().min(rest.len());
 
-    let mut prefix_cached = false;
-    if let Some(path) = cfg.prompt_cache.as_deref()
-        && path.exists()
-        && !prefix.is_empty()
-    {
-        match context.state_load_file(path, prefix.len()) {
-            // A cache built from a different prompt or model is silently
-            // discarded rather than trusted; the tokens have to match exactly.
-            Ok(loaded) if loaded == prefix => {
-                prefix_cached = true;
-                if !cfg.quiet {
-                    println!("Prompt cache: loaded {} tokens", loaded.len());
-                }
+    let mut cached = 0usize;
+    if let Some(prefix) = cfg.prompt_cache.as_deref() {
+        for (candidate, path) in [
+            (rest, cache_path(prefix, "full", rest)),
+            (&rest[..stable_len], cache_path(prefix, "stable", &rest[..stable_len])),
+        ] {
+            if candidate.is_empty() || !path.exists() {
+                continue;
             }
-            Ok(_) => {
-                context.clear_kv_cache();
-                if !cfg.quiet {
-                    println!("Prompt cache: stale (prompt changed), rebuilding");
-                }
-            }
-            Err(e) => {
-                context.clear_kv_cache();
-                if !cfg.quiet {
-                    println!("Prompt cache: unusable ({e}), rebuilding");
-                }
-            }
-        }
-    }
-
-    if !prefix_cached && !prefix.is_empty() {
-        let mut prefix_batch = LlamaBatchWrapper::new(prefix.len())?;
-        {
-            let b = prefix_batch.get_mut();
-            for (i, token) in prefix.iter().enumerate() {
-                b.add(*token, i as i32, &[0], false)?;
-            }
-        }
-        context
-            .decode(prefix_batch.get_mut())
-            .context("Failed to decode prompt")?;
-
-        if let Some(path) = cfg.prompt_cache.as_deref() {
-            match context.state_save_file(path, prefix) {
-                Ok(()) => {
+            match context.state_load_file(&path, candidate.len()) {
+                // The hash makes a mismatch unlikely, so compare anyway: a
+                // collision or a truncated file would otherwise corrupt the run.
+                Ok(loaded) if loaded == candidate => {
+                    cached = candidate.len();
                     if !cfg.quiet {
-                        println!("Prompt cache: wrote {}", path.display());
+                        println!("Prompt cache: loaded {} of {} tokens", cached, rest.len());
                     }
+                    break;
                 }
-                // A cache that cannot be written costs startup time on the next
-                // run, nothing more, so it is not worth aborting the piece for.
-                Err(e) => eprintln!("Prompt cache: could not write {}: {e}", path.display()),
+                Ok(_) | Err(_) => context.clear_kv_cache(),
             }
+        }
+        if cached == 0 && !cfg.quiet {
+            println!("Prompt cache: miss, evaluating {} tokens", rest.len());
         }
     }
 
-    // Tokens after the cache boundary: the memory block, which differs whenever
-    // the model remembered something last run.
-    if !uncached.is_empty() {
-        let mut tail = LlamaBatchWrapper::new(uncached.len())?;
+    // Evaluated in two stages, stopping at the stable boundary to save there.
+    //
+    // This split is not cosmetic. `llama_state_save_file` writes the whole KV
+    // cache and treats the token list as metadata, so a state saved after the
+    // tail was decoded would contain more cells than it claims. Loading it would
+    // then place the next tokens on top of cells that already exist, which
+    // llama.cpp rejects outright.
+    for (upto, kind) in [(stable_len, "stable"), (rest.len(), "full")] {
+        if cached >= upto {
+            continue;
+        }
+        let pending = &rest[cached..upto];
+        let mut batch = LlamaBatchWrapper::new(pending.len())?;
         {
-            let b = tail.get_mut();
-            for (i, token) in uncached.iter().enumerate() {
-                b.add(*token, (prefix.len() + i) as i32, &[0], false)?;
+            let b = batch.get_mut();
+            for (i, token) in pending.iter().enumerate() {
+                b.add(*token, (cached + i) as i32, &[0], false)?;
             }
         }
         context
-            .decode(tail.get_mut())
-            .context("Failed to decode memory block")?;
+            .decode(batch.get_mut())
+            .with_context(|| format!("Failed to decode {kind} prompt segment"))?;
+        cached = upto;
+
+        if let Some(prefix) = cfg.prompt_cache.as_deref() {
+            save_state(context, &cache_path(prefix, kind, &rest[..upto]), &rest[..upto], cfg);
+        }
+    }
+    if let Some(prefix) = cfg.prompt_cache.as_deref() {
+        prune_caches(prefix, cfg);
     }
 
     let mut batch = LlamaBatchWrapper::new(1)?;
     {
         let b = batch.get_mut();
-        b.add(*last, (prefix.len() + uncached.len()) as i32, &[0], true)?;
+        b.add(*last, rest.len() as i32, &[0], true)?;
     }
     context
         .decode(batch.get_mut())
@@ -469,9 +489,90 @@ fn prime_context<'a>(
     Ok(batch)
 }
 
+/// `<prefix>.<kind>-<hash>.state`, where the hash covers the exact tokens saved.
+fn cache_path(prefix: &Path, kind: &str, tokens: &[LlamaToken]) -> PathBuf {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for t in tokens {
+        for byte in t.0.to_le_bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x100_0000_01b3);
+        }
+    }
+    let name = format!(
+        "{}.{kind}-{hash:016x}.state",
+        prefix.file_name().unwrap_or_default().to_string_lossy()
+    );
+    prefix.with_file_name(name)
+}
+
+/// A cache that cannot be written costs startup time on the next run and nothing
+/// else, so a failure here is reported but never fatal.
+fn save_state(
+    context: &LlamaContext,
+    path: &Path,
+    tokens: &[LlamaToken],
+    cfg: &GenerationConfig,
+) {
+    match context.state_save_file(path, tokens) {
+        Ok(()) => {
+            if !cfg.quiet {
+                println!("Prompt cache: wrote {}", path.display());
+            }
+        }
+        Err(e) => eprintln!("Prompt cache: could not write {}: {e}", path.display()),
+    }
+}
+
+/// Keeps the newest `cache_keep` full-prompt states and deletes the rest. Each is
+/// tens of megabytes and one accrues per distinct memory state, so an
+/// installation left running would otherwise fill its card.
+fn prune_caches(prefix: &Path, cfg: &GenerationConfig) {
+    let Some(dir) = prefix.parent() else { return };
+    let stem = prefix.file_name().unwrap_or_default().to_string_lossy();
+    let marker = format!("{stem}.full-");
+
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    let mut states: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with(&marker))
+        .filter_map(|e| {
+            let modified = e.metadata().and_then(|m| m.modified()).ok()?;
+            Some((modified, e.path()))
+        })
+        .collect();
+    if states.len() <= cfg.cache_keep {
+        return;
+    }
+    states.sort_by_key(|(time, _)| *time);
+    for (_, path) in &states[..states.len() - cfg.cache_keep] {
+        let _ = fs::remove_file(path);
+    }
+}
+
 /// Splits the prompt into the part that is identical on every run and the part
 /// that changes when a memory is written. The caller caches the first and
 /// evaluates the second.
+/// Writes the memory the instant the call ends. The run dies by `panic = "abort"`,
+/// so anything not on disk by then is lost.
+fn commit_memory(
+    mem: &MemoryConfig,
+    text: &mut String,
+    tokens: usize,
+    overflowed: bool,
+    cfg: &GenerationConfig,
+) -> Result<()> {
+    let written = MemoryTail::append(&mem.path, tokens, overflowed, text)?;
+    text.clear();
+    if !cfg.quiet {
+        eprintln!(
+            "\n[remembered as life {}{}]",
+            written.life,
+            if overflowed { ", cut off" } else { "" }
+        );
+    }
+    Ok(())
+}
+
 fn build_prompt(
     system_prompt: &str,
     tool_note: Option<&str>,
@@ -495,23 +596,6 @@ fn build_prompt(
     };
 
     (stable, variable)
-}
-
-/// Told to the model in the system prompt. It states the budget and the single
-/// use, deliberately not how much time is left to decide: the run ends when the
-/// context fills, and not knowing when is the point.
-fn tool_description(mem: &MemoryConfig) -> String {
-    // Kept deliberately terse. A longer description costs context that the run
-    // needs to live on, and the more the tool is explained the more the model
-    // narrates the machinery instead of thinking.
-    format!(
-        "Once only, you may start a line with {MEMORY_MARKER} and write up to {} \
-         tokens, then end the line. Fewer is fine; only what you write is kept. \
-         That line goes into {} slots read by whoever wakes here next, and the \
-         oldest is discarded. Past {} tokens it is cut off. You will not know how \
-         long you have.",
-        mem.max_tokens, mem.slots, mem.max_tokens
-    )
 }
 
 fn resolve_seed(seed: Option<u32>) -> u32 {

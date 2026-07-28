@@ -25,11 +25,16 @@ pub struct Args {
     #[arg(short, long, default_value = "prompt.txt")]
     pub prompt_file: PathBuf,
 
-    /// Context window size in tokens. Smaller means a shorter, cleaner life
-    /// before the overflow crash; larger lets the voice run longer but small
-    /// models tend to drift in the long tail.
+    /// Total context window in tokens, prompt included. Ignored when
+    /// --monologue-context-size is given.
     #[arg(short, long, default_value_t = 512)]
     pub context_size: usize,
+
+    /// Tokens reserved for the monologue itself, on top of whatever the prompt
+    /// and the memory block cost. Keeps every life the same length as memories
+    /// accumulate, instead of the prompt eating into it.
+    #[arg(long)]
+    pub monologue_context_size: Option<usize>,
 
     /// Optional cap on generated tokens (helpful for readability)
     #[arg(long)]
@@ -122,8 +127,9 @@ pub struct Args {
     pub warm_cache: bool,
 
     /// Give the model one tool: remember. It may write a single memory per run,
-    /// stored here as raw token IDs. The newest --memory-slots memories are
-    /// shown to the next run. Omit to run without memory.
+    /// appended to this log as plain text, one memory per line. The newest
+    /// --memory-slots memories are shown to the next run. Omit to run without
+    /// memory.
     #[arg(long)]
     pub memory_file: Option<PathBuf>,
 
@@ -137,9 +143,20 @@ pub struct Args {
     #[arg(long, default_value_t = 5)]
     pub memory_slots: usize,
 
-    /// Print the whole memory archive as text and exit. Requires --memory-file.
+    /// How the tool and the remembered lines are described to the model. This is
+    /// the artistic dial; see memory-prompt.txt. Falls back to a built-in framing
+    /// when the file is absent.
+    #[arg(long, default_value = "memory-prompt.txt")]
+    pub memory_prompt_file: PathBuf,
+
+    /// Print the memory log and exit. Requires --memory-file.
     #[arg(long)]
     pub memory_dump: bool,
+
+    /// How many full-prompt cache files to keep. One accrues per memory state and
+    /// each is tens of megabytes.
+    #[arg(long, default_value_t = 4)]
+    pub prompt_cache_keep: usize,
 
     /// Silence run metadata and only stream the model output
     #[arg(long)]

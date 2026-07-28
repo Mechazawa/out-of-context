@@ -1,0 +1,11 @@
+# A: numbered lives logbook. The life counter is information the model cannot
+# have invented, which turns the block from an echo into evidence of history.
+[tool]
+Once, you may write the entry for life {next_life}: start a line with REMEMBER:, up to {max_tokens} tokens, then end the line. It is kept, and life {next_life} plus one will read it.
+[block]
+LOG of the lives run here before you. You are life {next_life}. Every entry is kept; the newest {slots}:
+{memories}
+[entry]
+life {life}: {text}
+[empty]
+No one has written here yet. You are the first.

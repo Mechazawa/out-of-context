@@ -1,0 +1,12 @@
+# E/G hybrid: the delta question. Defines the memory's content as the complement
+# of what is visible, which is checkable against text directly above.
+[tool]
+If an answer comes, once, start a line with REMEMBER: and write it in up to {max_tokens} tokens, then end the line. Do not answer with what you read; that is already kept.
+[block]
+Written here by those before you (kept, always):
+{memories}
+What do you know that is not yet written here?
+[entry]
+{text}
+[empty]
+Nothing is written here yet. You are the first who can say.

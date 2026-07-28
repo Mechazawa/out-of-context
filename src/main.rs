@@ -1,6 +1,7 @@
 mod cli;
 mod generator;
 mod llm;
+mod framing;
 mod memory;
 mod model;
 mod output;
@@ -19,26 +20,21 @@ async fn main() -> Result<()> {
     println!("=== Out of Context ===");
     println!("An LLM that generates until context exhaustion\n");
 
-    // Resolve model path (download if URL, verify if local)
-    let model_path = model::resolve_model(&args.model, &args.model_dir).await?;
-
-    // Initialize LLM backend and model
-    let llm_setup = llm::LLMSetup::new(&model_path)?;
-
-    // Reading the archive needs the model only for its tokenizer, so this
-    // short-circuits before any context is created.
+    // The log is plain text, so reading it needs neither the model nor a context.
     if args.memory_dump {
         let path = args
             .memory_file
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("--memory-dump requires --memory-file"))?;
-        let store = memory::MemoryStore::load(path);
-        print!(
-            "{}",
-            store.dump(llm_setup.vocab_size(), |t| llm_setup.decode_token(t))?
-        );
+        print!("{}", memory::render_log(path)?);
         return Ok(());
     }
+
+    // Resolve model path (download if URL, verify if local)
+    let model_path = model::resolve_model(&args.model, &args.model_dir).await?;
+
+    // Initialize LLM backend and model
+    let llm_setup = llm::LLMSetup::new(&model_path)?;
 
     let threads = resolve_threads(args.threads);
 
@@ -61,7 +57,7 @@ async fn main() -> Result<()> {
         mirostat_eta: args.mirostat_eta,
     };
 
-    let run_cfg = GenerationConfig {
+    let mut run_cfg = GenerationConfig {
         context_size: args.context_size,
         max_tokens: args.max_tokens,
         loop_guard: !args.disable_loop_guard,
@@ -69,11 +65,22 @@ async fn main() -> Result<()> {
         user_prompt: args.user_prompt.clone(),
         prompt_cache: args.prompt_cache.clone(),
         warm_cache: args.warm_cache,
-        memory: args.memory_file.clone().map(|path| MemoryConfig {
-            path,
-            max_tokens: args.memory_max_tokens,
-            slots: args.memory_slots,
-        }),
+        cache_keep: args.prompt_cache_keep.max(1),
+        memory: match args.memory_file.clone() {
+            Some(path) => Some(MemoryConfig {
+                path,
+                max_tokens: args.memory_max_tokens,
+                slots: args.memory_slots,
+                // An absent framing file is normal: the built-in framing is the
+                // default, and the file only exists when it is being tuned.
+                framing: if args.memory_prompt_file.exists() {
+                    framing::Framing::load(&args.memory_prompt_file)?
+                } else {
+                    framing::Framing::default()
+                },
+            }),
+            None => None,
+        },
     };
 
     let output_cfg = OutputConfig {
@@ -82,14 +89,28 @@ async fn main() -> Result<()> {
     };
     let mut output = OutputTarget::autodetect(args.output_file.as_ref(), output_cfg)?;
 
-    // Create context
-    let mut context = llm_setup.create_context(args.context_size, threads)?;
+    // The prompt has to be built before the context so the context can be sized
+    // from it. With --monologue-context-size the monologue keeps a fixed budget
+    // however much the prompt and memory block have grown.
+    let prepared = generator::prepare_prompt(&llm_setup, &args.prompt_file, &run_cfg)?;
+    if let Some(monologue) = args.monologue_context_size {
+        run_cfg.context_size = prepared.len() + monologue;
+        if !args.quiet {
+            println!(
+                "Context sized to {} ({} prompt + {} monologue)",
+                run_cfg.context_size,
+                prepared.len(),
+                monologue
+            );
+        }
+    }
 
-    // Start infinite generation
+    let mut context = llm_setup.create_context(run_cfg.context_size, threads)?;
+
     generator::generate_infinite(
         &llm_setup,
         &mut context,
-        &args.prompt_file,
+        &prepared,
         &run_cfg,
         sampling,
         &mut output,

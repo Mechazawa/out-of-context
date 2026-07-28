@@ -1,187 +1,225 @@
 //! The one tool the model has: remember.
 //!
-//! A run may write a single memory. Every memory ever written is kept on disk as
-//! an archive to read later; only the newest `slots` are shown to the next run.
+//! A run may write a single memory. Every memory ever written is appended to a
+//! plain-text log meant to be read by a human afterwards; only the newest few
+//! are shown to the next run.
 //!
-//! Memories are stored as raw token IDs rather than text: the cap the model is
-//! told about is a token budget, so counting tokens is the only way to enforce it
-//! exactly, and it avoids re-tokenization drift between the run that wrote a
-//! memory and the run that reads it.
-//!
-//! Token IDs only mean something against one vocabulary, so each entry records
-//! the vocab size it was written with. Entries from a different model are kept on
-//! disk but skipped when rendering, which loses nothing and shows no garbage.
+//! The log is never loaded whole. It is read backwards from the end, far enough
+//! to recover the newest entries and the running index, so an installation that
+//! has lived thousands of lives costs the same to start as one on its first.
 
 use anyhow::{Context, Result};
-use llama_cpp_2::token::LlamaToken;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use chrono::DateTime;
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-const HEADER: &str = "# ooc-memory v2 (fields: overflowed vocab token-ids...)";
+const HEADER: &str =
+    "# out-of-context memory log. tab-separated: life, unix-time, tokens, status, text";
 
-/// What the stored memory looks like when the model's budget ran out mid-write.
+/// Appended to what was stored when the model's budget ran out mid-write.
 pub const OVERFLOW_MARK: &str = " - ERR MEMORY OVERFLOW";
+
+/// How much of the tail to read per step when walking backwards.
+const TAIL_CHUNK: usize = 8 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct Memory {
-    pub tokens: Vec<LlamaToken>,
-    /// The write hit the token cap and was cut off.
+    /// 1-based life number, in write order.
+    pub life: u64,
+    pub unix_time: u64,
+    /// Tokens actually stored, as counted when it was written.
+    pub tokens: usize,
+    /// The write hit the cap and was cut off.
     pub overflowed: bool,
-    /// Vocabulary size of the model that wrote it.
-    pub vocab_size: i32,
+    pub text: String,
 }
 
+impl Memory {
+    fn parse(line: &str) -> Option<Self> {
+        let mut f = line.splitn(5, '\t');
+        let life = f.next()?.trim().parse().ok()?;
+        let unix_time = f.next()?.trim().parse().unwrap_or(0);
+        let tokens = f.next()?.trim().parse().unwrap_or(0);
+        let overflowed = f.next()?.trim() == "overflow";
+        let text = f.next()?.trim().to_string();
+        if text.is_empty() {
+            return None;
+        }
+        Some(Self {
+            life,
+            unix_time,
+            tokens,
+            overflowed,
+            text,
+        })
+    }
+
+    fn to_line(&self) -> String {
+        // Tabs and newlines would break the one-memory-per-line contract. A
+        // memory is captured up to a newline so it cannot contain one, but the
+        // model can emit a tab.
+        let text: String = self
+            .text
+            .chars()
+            .map(|c| if c.is_control() || c == '\t' { ' ' } else { c })
+            .collect();
+        format!(
+            "{}\t{}\t{}\t{}\t{}",
+            self.life,
+            self.unix_time,
+            self.tokens,
+            if self.overflowed { "overflow" } else { "ok" },
+            text.trim()
+        )
+    }
+
+    /// What the next life reads: the text, with the truncation visible.
+    pub fn display(&self) -> String {
+        if self.overflowed {
+            format!("{}{}", self.text, OVERFLOW_MARK)
+        } else {
+            self.text.clone()
+        }
+    }
+}
+
+/// The newest entries plus how many lives have been lived, without reading the
+/// whole log.
 #[derive(Clone, Debug, Default)]
-pub struct MemoryStore {
-    /// Every memory in the archive, oldest first, including foreign-vocab ones.
-    pub all: Vec<Memory>,
+pub struct MemoryTail {
+    /// Oldest first.
+    pub recent: Vec<Memory>,
+    /// Highest life number seen, so the next life knows its own number.
+    pub lives: u64,
 }
 
-impl MemoryStore {
-    /// Reads the whole archive. A missing or malformed file yields an empty
-    /// store: the piece must still run when there is nothing to remember.
-    pub fn load(path: &Path) -> Self {
-        let Ok(text) = fs::read_to_string(path) else {
-            return Self::default();
+impl MemoryTail {
+    /// Reads the last `want` memories by walking the file backwards.
+    ///
+    /// A missing or unreadable log yields an empty tail: the piece must still run
+    /// on its first life, and a damaged log is indistinguishable from that.
+    pub fn load(path: &Path, want: usize) -> Self {
+        match Self::try_load(path, want) {
+            Ok(tail) => tail,
+            Err(_) => Self::default(),
+        }
+    }
+
+    fn try_load(path: &Path, want: usize) -> Result<Self> {
+        let mut file = File::open(path)?;
+        let len = file.metadata()?.len();
+        if len == 0 {
+            return Ok(Self::default());
+        }
+
+        // Walk backwards in chunks until enough complete lines are in hand. One
+        // extra line of slack covers the partial line at the front of a chunk.
+        let mut buf: Vec<u8> = Vec::new();
+        let mut pos = len;
+        let mut memories = loop {
+            let step = TAIL_CHUNK.min(pos as usize);
+            pos -= step as u64;
+            let mut chunk = vec![0u8; step];
+            file.seek(SeekFrom::Start(pos))?;
+            file.read_exact(&mut chunk)?;
+            chunk.extend_from_slice(&buf);
+            buf = chunk;
+
+            let text = String::from_utf8_lossy(&buf);
+            // Skip the first line unless the file start was reached: it may be a
+            // fragment of a longer line that continues before this chunk.
+            let complete: Vec<&str> = if pos == 0 {
+                text.lines().collect()
+            } else {
+                text.lines().skip(1).collect()
+            };
+            let parsed: Vec<Memory> = complete
+                .iter()
+                .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+                .filter_map(|l| Memory::parse(l))
+                .collect();
+
+            if parsed.len() >= want || pos == 0 {
+                break parsed;
+            }
         };
 
-        let mut all = Vec::new();
-        for line in text.lines() {
-            if line.starts_with('#') || line.trim().is_empty() {
-                continue;
-            }
-            let mut fields = line.split_whitespace();
-            let Some(overflowed) = fields.next().map(|f| f == "1") else {
-                continue;
-            };
-            let Some(Ok(vocab_size)) = fields.next().map(str::parse::<i32>) else {
-                continue;
-            };
-            let tokens: Vec<LlamaToken> = fields
-                .filter_map(|f| f.parse::<i32>().ok())
-                .filter(|id| *id >= 0 && *id < vocab_size)
-                .map(LlamaToken::new)
-                .collect();
-            if !tokens.is_empty() {
-                all.push(Memory {
-                    tokens,
-                    overflowed,
-                    vocab_size,
-                });
-            }
+        let lives = memories.last().map(|m| m.life).unwrap_or(0);
+        if memories.len() > want {
+            memories.drain(0..memories.len() - want);
         }
-        Self { all }
+        Ok(Self {
+            recent: memories,
+            lives,
+        })
     }
 
-    /// The newest `slots` memories this model can actually read.
-    fn visible(&self, slots: usize, vocab_size: i32) -> Vec<&Memory> {
-        let mut readable: Vec<&Memory> = self
-            .all
-            .iter()
-            .filter(|m| m.vocab_size == vocab_size)
-            .collect();
-        if readable.len() > slots {
-            readable.drain(0..readable.len() - slots);
-        }
-        readable
-    }
-
-    /// Appends one memory to the archive. Nothing is ever removed from the file.
+    /// Appends one memory to the log, returning what was written.
     ///
-    /// Written the moment the model finishes its call, not at exit: the run ends
-    /// in a deliberate panic with `panic = "abort"`, so there is no later
-    /// opportunity to flush.
-    pub fn append(&mut self, path: &Path, memory: Memory) -> Result<()> {
-        let fresh = !path.exists() || fs::metadata(path).map(|m| m.len() == 0).unwrap_or(true);
+    /// Written the instant the model finishes its call, not at exit: the run ends
+    /// in a deliberate panic with `panic = "abort"`, so there is no later chance
+    /// to flush.
+    pub fn append(path: &Path, tokens: usize, overflowed: bool, text: &str) -> Result<Memory> {
+        let tail = Self::load(path, 1);
+        let memory = Memory {
+            life: tail.lives + 1,
+            unix_time: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            tokens,
+            overflowed,
+            text: text.trim().to_string(),
+        };
+
+        let fresh = !path.exists() || path.metadata().map(|m| m.len() == 0).unwrap_or(true);
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)
-            .with_context(|| format!("Failed to open memory file: {}", path.display()))?;
+            .with_context(|| format!("Failed to open memory log: {}", path.display()))?;
         if fresh {
             writeln!(file, "{HEADER}")?;
         }
-
-        let mut line = String::new();
-        line.push(if memory.overflowed { '1' } else { '0' });
-        line.push(' ');
-        line.push_str(&memory.vocab_size.to_string());
-        for t in &memory.tokens {
-            line.push(' ');
-            line.push_str(&t.0.to_string());
-        }
-        writeln!(file, "{line}")
+        writeln!(file, "{}", memory.to_line())
             .with_context(|| format!("Failed to append memory: {}", path.display()))?;
-
-        self.all.push(memory);
-        Ok(())
+        Ok(memory)
     }
+}
 
-    /// Renders the block that goes into the next life's prompt.
-    ///
-    /// Framed as a machine with a fixed number of lossy slots rather than as a
-    /// diary, so the truncation and the eviction are part of what the model reads
-    /// about itself. The archive behind it is never mentioned to the model: as far
-    /// as it knows, what falls out of a slot is gone.
-    pub fn render_block(
-        &self,
-        slots: usize,
-        vocab_size: i32,
-        decode: impl Fn(LlamaToken) -> Result<String>,
-    ) -> Result<String> {
-        let visible = self.visible(slots, vocab_size);
-        let mut block = format!(
-            "MEMORY ({} of {slots} slots used, oldest discarded):\n",
-            visible.len()
-        );
-        if visible.is_empty() {
-            // Deliberately not a list of numbered empty slots. Given that
-            // template the model writes "REMEMBER: [1]" and copies the display
-            // format instead of remembering anything.
-            block.push_str("nothing remembered yet\n");
+/// Renders the whole log for a human to read. This is the one place the entire
+/// file is walked, and it is a deliberate choice: it is an offline command, not
+/// something a run does.
+pub fn render_log(path: &Path) -> Result<String> {
+    let file = File::open(path)
+        .with_context(|| format!("Failed to open memory log: {}", path.display()))?;
+    let mut out = String::new();
+    let mut count = 0usize;
+    for line in std::io::BufReader::new(file).lines() {
+        let line = line?;
+        if line.starts_with('#') || line.trim().is_empty() {
+            continue;
         }
-        for m in visible {
-            let mut text = String::new();
-            for t in &m.tokens {
-                text.push_str(&decode(*t)?);
-            }
-            block.push_str(text.trim());
-            if m.overflowed {
-                block.push_str(OVERFLOW_MARK);
-            }
-            block.push('\n');
+        if let Some(m) = Memory::parse(&line) {
+            count += 1;
+            out.push_str(&format!(
+                "life {:<5} {}  {:>3} tok  {}\n",
+                m.life,
+                format_time(m.unix_time),
+                m.tokens,
+                m.display()
+            ));
         }
-        Ok(block)
     }
+    Ok(format!("{count} memories\n{out}"))
+}
 
-    /// Prints the full archive as text, newest last. For reading afterwards;
-    /// entries written by another model are marked rather than decoded.
-    pub fn dump(
-        &self,
-        vocab_size: i32,
-        decode: impl Fn(LlamaToken) -> Result<String>,
-    ) -> Result<String> {
-        let mut out = format!("{} memories in archive\n", self.all.len());
-        for (i, m) in self.all.iter().enumerate() {
-            if m.vocab_size != vocab_size {
-                out.push_str(&format!(
-                    "{:>4}. (written by a different model, vocab {})\n",
-                    i + 1,
-                    m.vocab_size
-                ));
-                continue;
-            }
-            let mut text = String::new();
-            for t in &m.tokens {
-                text.push_str(&decode(*t)?);
-            }
-            out.push_str(&format!("{:>4}. {}", i + 1, text.trim()));
-            if m.overflowed {
-                out.push_str(OVERFLOW_MARK);
-            }
-            out.push('\n');
-        }
-        Ok(out)
-    }
+/// Formats a unix timestamp for reading the log and for framings that show the
+/// model when a memory was written.
+pub fn format_time(unix: u64) -> String {
+    DateTime::from_timestamp(unix as i64, 0)
+        .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_else(|| "unknown".to_string())
 }
