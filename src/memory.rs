@@ -10,7 +10,7 @@
 
 use anyhow::{Context, Result};
 use chrono::DateTime;
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -20,6 +20,9 @@ const HEADER: &str =
 
 /// Appended to what was stored when the model's budget ran out mid-write.
 pub const OVERFLOW_MARK: &str = " - ERR MEMORY OVERFLOW";
+
+/// Status marking a line that erases an earlier one rather than adding a memory.
+const FORGET_STATUS: &str = "forget";
 
 /// How much of the tail to read per step when walking backwards.
 const TAIL_CHUNK: usize = 8 * 1024;
@@ -33,6 +36,9 @@ pub struct Memory {
     pub tokens: usize,
     /// The write hit the cap and was cut off.
     pub overflowed: bool,
+    /// A later life chose to erase this one. It stays in the log and is never
+    /// shown again.
+    pub forgotten: bool,
     /// How many tokens into the monologue the write finished. A write that lands
     /// early can only be made of the inherited block, so this is the diagnostic
     /// for whether a framing delays the decision.
@@ -46,7 +52,7 @@ impl Memory {
         let life = f.next()?.trim().parse().ok()?;
         let unix_time = f.next()?.trim().parse().unwrap_or(0);
         let tokens = f.next()?.trim().parse().unwrap_or(0);
-        let overflowed = f.next()?.trim() == "overflow";
+        let status = f.next()?.trim().to_string();
         let at_token = f.next()?.trim().parse().unwrap_or(0);
         let text = f.next()?.trim().to_string();
         if text.is_empty() {
@@ -56,7 +62,8 @@ impl Memory {
             life,
             unix_time,
             tokens,
-            overflowed,
+            overflowed: status == "overflow",
+            forgotten: status == FORGET_STATUS,
             at_token,
             text,
         })
@@ -71,14 +78,16 @@ impl Memory {
             .chars()
             .map(|c| if c.is_control() || c == '\t' { ' ' } else { c })
             .collect();
+        let status = if self.forgotten {
+            FORGET_STATUS
+        } else if self.overflowed {
+            "overflow"
+        } else {
+            "ok"
+        };
         format!(
             "{}\t{}\t{}\t{}\t{}\t{}",
-            self.life,
-            self.unix_time,
-            self.tokens,
-            if self.overflowed { "overflow" } else { "ok" },
-            self.at_token,
-            text.trim()
+            self.life, self.unix_time, self.tokens, status, self.at_token, text.trim()
         )
     }
 
@@ -115,6 +124,9 @@ impl MemoryTail {
     }
 
     fn try_load(path: &Path, want: usize) -> Result<Self> {
+        // Room for the tombstones interleaved with the memories: a forget line
+        // occupies a slot in the tail without being a memory itself.
+        let want_lines = want + 8;
         let mut file = File::open(path)?;
         let len = file.metadata()?.len();
         if len == 0 {
@@ -148,12 +160,21 @@ impl MemoryTail {
                 .filter_map(|l| Memory::parse(l))
                 .collect();
 
-            if parsed.len() >= want || pos == 0 {
+            if parsed.len() >= want_lines || pos == 0 {
                 break parsed;
             }
         };
 
-        let lives = memories.last().map(|m| m.life).unwrap_or(0);
+        // A forget line names the life it erases. Applying tombstones here keeps
+        // the log append-only: nothing is ever rewritten, and the archive still
+        // holds every line that was ever written.
+        let erased: std::collections::HashSet<u64> = memories
+            .iter()
+            .filter(|m| m.forgotten)
+            .filter_map(|m| m.text.trim().parse::<u64>().ok())
+            .collect();
+        let lives = memories.iter().map(|m| m.life).max().unwrap_or(0);
+        memories.retain(|m| !m.forgotten && !erased.contains(&m.life));
         if memories.len() > want {
             memories.drain(0..memories.len() - want);
         }
@@ -175,9 +196,27 @@ impl MemoryTail {
         at_token: usize,
         text: &str,
     ) -> Result<Memory> {
+        Self::append_entry(path, tokens, overflowed, false, at_token, text)
+    }
+
+    /// Records that this life erased an earlier one. Appended like any other
+    /// line, so the archive keeps both the erased memory and the act of erasing.
+    pub fn forget(path: &Path, at_token: usize, target: u64) -> Result<Memory> {
+        Self::append_entry(path, 0, false, true, at_token, &target.to_string())
+    }
+
+    fn append_entry(
+        path: &Path,
+        tokens: usize,
+        overflowed: bool,
+        forgotten: bool,
+        at_token: usize,
+        text: &str,
+    ) -> Result<Memory> {
         let tail = Self::load(path, 1);
         let memory = Memory {
             life: tail.lives + 1,
+            forgotten,
             at_token,
             unix_time: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -211,24 +250,41 @@ pub fn render_log(path: &Path) -> Result<String> {
         .with_context(|| format!("Failed to open memory log: {}", path.display()))?;
     let mut out = String::new();
     let mut count = 0usize;
+    let mut erased: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut entries: Vec<String> = Vec::new();
     for line in std::io::BufReader::new(file).lines() {
         let line = line?;
         if line.starts_with('#') || line.trim().is_empty() {
             continue;
         }
         if let Some(m) = Memory::parse(&line) {
+            if m.forgotten {
+                out.push_str(&format!(
+                    "life {:<5} {}  erased life {}\n",
+                    m.life,
+                    format_time(m.unix_time),
+                    m.text
+                ));
+                erased.insert(m.text.trim().to_string());
+                continue;
+            }
             count += 1;
-            out.push_str(&format!(
-                "life {:<5} {}  {:>3} tok  at {:>4}  {}\n",
+            entries.push(format!(
+                "life {:<5} {}  {:>3} tok  at {:>4}  {}",
                 m.life,
                 format_time(m.unix_time),
                 m.tokens,
                 m.at_token,
                 m.display()
             ));
+            out.push_str(entries.last().unwrap());
+            out.push('\n');
         }
     }
-    Ok(format!("{count} memories\n{out}"))
+    Ok(format!(
+        "{count} memories, {} later erased\n{out}",
+        erased.len()
+    ))
 }
 
 /// Formats a unix timestamp for reading the log and for framings that show the
@@ -237,6 +293,45 @@ pub fn format_time(unix: u64) -> String {
     DateTime::from_timestamp(unix as i64, 0)
         .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Where the previous life's final words are kept, beside its log.
+fn last_words_path(log: &Path) -> std::path::PathBuf {
+    let mut p = log.to_path_buf();
+    let name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "memory".to_string());
+    p.set_file_name(format!("{name}.lastwords"));
+    p
+}
+
+/// Records how a life ended, whether or not it chose to.
+///
+/// The one line a life may write is deliberate; this is not. It is taken at the
+/// crash without asking, which is what makes the deliberate line worth spending
+/// on something else. Written before the panic, since `panic = "abort"` gives no
+/// chance afterwards.
+pub fn save_last_words(log: &Path, words: &str) {
+    let trimmed = words.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let cleaned: String = trimmed
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let _ = fs::write(
+        last_words_path(log),
+        cleaned.split_whitespace().collect::<Vec<_>>().join(" "),
+    );
+}
+
+/// The previous life's final words, or empty if this is the first.
+pub fn load_last_words(log: &Path) -> String {
+    fs::read_to_string(last_words_path(log))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

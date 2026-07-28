@@ -15,6 +15,7 @@ fn memory(life: u64, text: &str) -> Memory {
         unix_time: 1_785_000_000,
         tokens: 8,
         overflowed: false,
+        forgotten: false,
         at_token: 100,
         text: text.to_string(),
     }
@@ -66,13 +67,13 @@ fn a_blank_empty_section_shows_no_block_at_all() {
     // On a fresh log the empty text is the only memory-shaped line in context and
     // the model copies it verbatim, so a framing must be able to show nothing.
     let framing = parse_framing("[block]\nHEADER\n{memories}\n[empty]\n");
-    assert_eq!(framing.block(&[], 5, 0, 0.0), "");
+    assert_eq!(framing.block(&[], 5, 0, 0.0, ""), "");
 }
 
 #[test]
 fn an_empty_section_with_text_still_renders() {
     let framing = parse_framing("[block]\nHEADER:\n{memories}\n[empty]\nnothing yet\n");
-    let block = framing.block(&[], 5, 0, 0.0);
+    let block = framing.block(&[], 5, 0, 0.0, "");
     assert!(block.contains("HEADER:"));
     assert!(block.contains("nothing yet"));
 }
@@ -82,7 +83,7 @@ fn entry_and_block_placeholders_are_substituted() {
     let framing = parse_framing(
         "[block]\n{lives} before you, {used} of {slots}:\n{memories}\n[entry]\nlife {life}: {text}\n[empty]\n",
     );
-    let block = framing.block(&[memory(3, "a line")], 5, 9, 0.0);
+    let block = framing.block(&[memory(3, "a line")], 5, 9, 0.0, "");
     assert!(block.contains("9 before you, 1 of 5:"));
     assert!(block.contains("life 3: a line"));
 }
@@ -112,8 +113,29 @@ fn an_unknown_section_is_rejected_rather_than_ignored() {
 #[test]
 fn omitted_sections_keep_the_built_in_text() {
     let only_entry = parse_framing("[entry]\n>> {text}\n");
-    let default_tool = Framing::default().tool(32, 5, 0);
-    assert_eq!(only_entry.tool(32, 5, 0), default_tool);
+    let default_tool = Framing::default().tool(32, 5, 0, false);
+    assert_eq!(only_entry.tool(32, 5, 0, false), default_tool);
+}
+
+#[test]
+fn the_second_tool_is_described_only_when_it_exists() {
+    let framing = parse_framing("[tool]\nwrite a line. {forget_note}\n");
+    assert!(!framing.tool(32, 5, 0, false).contains("FORGET"));
+    assert!(framing.tool(32, 5, 0, true).contains("FORGET:"));
+}
+
+#[test]
+fn enabling_the_second_tool_is_never_silently_ignored() {
+    // A framing that never mentions it still has to tell the model it is there.
+    let framing = parse_framing("[tool]\nwrite a line.\n");
+    assert!(framing.tool(32, 5, 0, true).contains("FORGET:"));
+}
+
+#[test]
+fn last_words_reach_the_block() {
+    let framing = parse_framing("[block]\nended: {last_words}\n{memories}\n[empty]\nnone\n");
+    let block = framing.block(&[], 5, 0, 0.0, "and then I could not");
+    assert!(block.contains("ended: and then I could not"));
 }
 
 /// Writes a framing to a temp file and loads it, since parsing is file-based.

@@ -162,6 +162,13 @@ pub struct Args {
     #[arg(long, default_value_t = 0.0)]
     pub memory_reject_above: f32,
 
+    /// Offer a second tool: FORGET: erases one inherited line, optionally by its
+    /// number. It shares the single use with REMEMBER, so a life either leaves
+    /// something or destroys something. The erased line stays in the log and is
+    /// never shown again.
+    #[arg(long)]
+    pub memory_forget: bool,
+
     /// Print the memory log and exit. Requires --memory-file.
     #[arg(long)]
     pub memory_dump: bool,

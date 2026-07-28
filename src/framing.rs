@@ -118,16 +118,35 @@ impl Framing {
     }
 
     /// The tool description that goes into the system prompt.
-    pub fn tool(&self, max_tokens: usize, slots: usize, lives: u64) -> String {
-        substitute(
+    ///
+    /// `{forget_note}` is filled in by the program rather than the file, so a
+    /// framing cannot describe a tool that is switched off.
+    pub fn tool(&self, max_tokens: usize, slots: usize, lives: u64, forget: bool) -> String {
+        let forget_note = if forget {
+            "Or, instead, you may erase one of the lines below: start a line with \
+             FORGET: and the number of the line, or just FORGET: for the oldest. You \
+             cannot do both, and what you erase does not come back."
+                .to_string()
+        } else {
+            String::new()
+        };
+        let out = substitute(
             &self.tool,
             &[
                 ("{max_tokens}", &max_tokens.to_string()),
                 ("{slots}", &slots.to_string()),
                 ("{lives}", &lives.to_string()),
                 ("{next_life}", &(lives + 1).to_string()),
+                ("{forget_note}", &forget_note),
             ],
-        )
+        );
+        // A framing that never mentions the second tool still gets it appended,
+        // so enabling it is never silently ignored.
+        if forget && !self.tool.contains("{forget_note}") {
+            format!("{} {}", out.trim_end(), forget_note)
+        } else {
+            out
+        }
     }
 
     /// Renders one remembered line with `age` slots' worth of decay applied.
@@ -177,7 +196,14 @@ impl Framing {
     /// something has been remembered. That matters: on a fresh log the empty
     /// text is the only memory-shaped line in context, and the model copies it
     /// verbatim as its first memory.
-    pub fn block(&self, memories: &[Memory], slots: usize, lives: u64, decay_rate: f32) -> String {
+    pub fn block(
+        &self,
+        memories: &[Memory],
+        slots: usize,
+        lives: u64,
+        decay_rate: f32,
+        last_words: &str,
+    ) -> String {
         if memories.is_empty() && self.empty.trim().is_empty() {
             return String::new();
         }
@@ -209,6 +235,7 @@ impl Framing {
             &self.block,
             &[
                 ("{memories}", &rendered),
+                ("{last_words}", &last_words.to_string()),
                 ("{used}", &memories.len().to_string()),
                 ("{slots}", &slots.to_string()),
                 ("{lives}", &lives.to_string()),

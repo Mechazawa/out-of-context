@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::llm::{LLMSetup, LlamaBatchWrapper};
 use crate::framing::{DECAY_GAP, Framing};
-use crate::memory::MemoryTail;
+use crate::memory::{self, MemoryTail};
 use crate::output::OutputTarget;
 
 /// A short first-person seed that anchors identity (a small thing made of words,
@@ -63,6 +63,8 @@ pub struct MemoryConfig {
     /// Word overlap above which a memory counts as something already known and
     /// is refused. 0 accepts anything.
     pub reject_above: f32,
+    /// Whether the second tool, erasing an inherited line, is offered at all.
+    pub forget: bool,
 }
 
 /// Shown to the model when what it wrote was already in the record. It spent its
@@ -128,6 +130,63 @@ impl PreparedPrompt {
 /// emit reliable JSON mid-monologue about as often as they emit none at all.
 const MEMORY_MARKER: &str = "REMEMBER:";
 
+/// How many tokens of the ending are kept for the next life to read.
+const LAST_WORDS_TOKENS: usize = 14;
+
+/// The second tool. It shares the single use with `REMEMBER`, so a life chooses
+/// between leaving something and destroying something; it cannot do both. A life
+/// that cannot make sense of what it inherited can erase it instead, and the next
+/// life will never know the line existed.
+const FORGET_MARKER: &str = "FORGET:";
+
+/// Told to the model when its erasure took effect. Naming what is gone costs
+/// context, like everything else here.
+const FORGOTTEN_NOTICE: &str = "\n[FORGOTTEN - that line is gone]\n";
+
+/// Told to the model when it asked to erase something that is not there.
+const NOTHING_TO_FORGET_NOTICE: &str = "\n[NOTHING TO FORGET]\n";
+
+/// Erases a remembered line, or reports that there was nothing to erase.
+///
+/// The target line stays in the log; only what reaches future lives changes. So
+/// the archive records both the memory and the decision to destroy it, and a
+/// reader afterwards can see what a life could not live with.
+fn forget_memory(
+    mem: &MemoryConfig,
+    wanted: Option<u64>,
+    at_token: usize,
+    cfg: &GenerationConfig,
+) -> Result<Option<&'static str>> {
+    let visible = MemoryTail::load(&mem.path, mem.slots);
+    let target = match wanted {
+        Some(life) if visible.recent.iter().any(|m| m.life == life) => Some(life),
+        // A number naming nothing visible is treated as no number at all: the
+        // model cannot see life numbers unless the framing shows them.
+        _ => visible.recent.first().map(|m| m.life),
+    };
+
+    let Some(life) = target else {
+        if !cfg.quiet {
+            eprintln!("\n[nothing to forget]");
+        }
+        return Ok(Some(NOTHING_TO_FORGET_NOTICE));
+    };
+
+    MemoryTail::forget(&mem.path, at_token, life)?;
+    if !cfg.quiet {
+        eprintln!("\n[erased what life {life} had kept]");
+    }
+    Ok(Some(FORGOTTEN_NOTICE))
+}
+
+/// Hands the ending to the next life. Deliberately not conditional on the model
+/// having done anything: the recorder does not ask.
+fn save_last_words(cfg: &GenerationConfig, words: &std::collections::VecDeque<String>) {
+    if let Some(mem) = cfg.memory.as_ref() {
+        memory::save_last_words(&mem.path, &words.iter().cloned().collect::<String>());
+    }
+}
+
 /// Whether `tail` ends with the marker at the start of a sentence.
 ///
 /// Requiring the start of a *line* loses real calls: the system prompt asks for
@@ -137,8 +196,8 @@ const MEMORY_MARKER: &str = "REMEMBER:";
 /// then merely talking about the tool fires it and the rest of the monologue is
 /// swallowed as a memory. The start of a sentence is where a call actually
 /// appears.
-fn marker_at_sentence_start(tail: &str) -> bool {
-    let Some(before) = tail.strip_suffix(MEMORY_MARKER) else {
+fn marker_at_sentence_start(tail: &str, marker: &str) -> bool {
+    let Some(before) = tail.strip_suffix(marker) else {
         return false;
     };
     match before.trim_end().chars().last() {
@@ -151,11 +210,13 @@ fn marker_at_sentence_start(tail: &str) -> bool {
 /// to deliver, which is the same resource it just spent remembering.
 const MEMORY_FULL_NOTICE: &str = "\n[MEMORY FULL - nothing more can be remembered]\n";
 
-/// Tracks the single permitted use of the tool across the run.
+/// Tracks the single permitted use of the tools across the run.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum MemoryState {
     Unused,
     Writing,
+    /// Collecting the line-number argument to an erasure.
+    Forgetting,
     Done,
 }
 
@@ -174,10 +235,14 @@ pub fn prepare_prompt(
     let (memory_block, tool_note, lives) = match cfg.memory.as_ref() {
         Some(mem) => {
             let tail = MemoryTail::load(&mem.path, mem.slots);
+            let last_words = memory::load_last_words(&mem.path);
             (
                 mem.framing
-                    .block(&tail.recent, mem.slots, tail.lives, mem.decay),
-                Some(mem.framing.tool(mem.max_tokens, mem.slots, tail.lives)),
+                    .block(&tail.recent, mem.slots, tail.lives, mem.decay, &last_words),
+                Some(
+                    mem.framing
+                        .tool(mem.max_tokens, mem.slots, tail.lives, mem.forget),
+                ),
                 tail.lives,
             )
         }
@@ -298,6 +363,9 @@ pub fn generate_infinite(
 
     // State of the one tool call. `marker_tail` holds just enough recent text to
     // spot the marker even when it is split across several tokens.
+    // The tail of the monologue as it goes, so however this life ends its last
+    // words are already in hand.
+    let mut last_words: std::collections::VecDeque<String> = std::collections::VecDeque::new();
     let mut memory_state = MemoryState::Unused;
     let mut marker_tail = String::new();
     let mut memory_text = String::new();
@@ -307,6 +375,8 @@ pub fn generate_infinite(
     loop {
         // Check if we're approaching context exhaustion
         if tokens_used >= panic_threshold {
+            // Written before the panic: `panic = "abort"` leaves no chance after.
+            save_last_words(cfg, &last_words);
             eprintln!("\n\nWARNING: Context window exhausted!");
             eprintln!("Out of Context has consumed all available memory.");
             panic!("Context overflow - terminating.");
@@ -315,6 +385,7 @@ pub fn generate_infinite(
         if let Some(limit) = cfg.max_tokens
             && generated_tokens >= limit
         {
+            save_last_words(cfg, &last_words);
             output.finish().ok();
             eprintln!("\n\nGeneration limit reached ({} tokens).", limit);
             return Ok(());
@@ -357,8 +428,31 @@ pub fn generate_infinite(
                     if let Some((cut, _)) = marker_tail.char_indices().rev().nth(keep) {
                         marker_tail.drain(0..cut);
                     }
-                    if marker_at_sentence_start(marker_tail.trim_end()) {
+                    let tail = marker_tail.trim_end();
+                    if marker_at_sentence_start(tail, MEMORY_MARKER) {
                         memory_state = MemoryState::Writing;
+                    } else if mem.forget && marker_at_sentence_start(tail, FORGET_MARKER) {
+                        memory_state = MemoryState::Forgetting;
+                    }
+                }
+                MemoryState::Forgetting => {
+                    // The argument is a life number. A bare erasure with no number
+                    // takes the oldest line still standing, which is also the most
+                    // decayed one: the easiest to give up on.
+                    memory_text.push_str(&token_text);
+                    memory_count += 1;
+                    let done = token_text.contains('\n')
+                        || token_text.trim_end().ends_with(['.', '!', '?'])
+                        || memory_count >= 6;
+                    if done {
+                        let wanted: Option<u64> = memory_text
+                            .split(|c: char| !c.is_ascii_digit())
+                            .find(|t| !t.is_empty())
+                            .and_then(|t| t.parse().ok());
+                        injection = forget_memory(mem, wanted, generated_tokens, cfg)?;
+                        memory_text.clear();
+                        memory_count = 0;
+                        memory_state = MemoryState::Done;
                     }
                 }
                 MemoryState::Writing => {
@@ -392,6 +486,11 @@ pub fn generate_infinite(
             }
         }
 
+        last_words.push_back(token_text.clone());
+        if last_words.len() > LAST_WORDS_TOKENS {
+            last_words.pop_front();
+        }
+
         recent_tokens.push(token_text);
 
         if recent_tokens.len() > 4096 {
@@ -400,6 +499,7 @@ pub fn generate_infinite(
         }
 
         if cfg.loop_guard && is_looping(&recent_tokens) {
+            save_last_words(cfg, &last_words);
             loop_strikes += 1;
             output.finish().ok();
             eprintln!(

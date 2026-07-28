@@ -134,3 +134,46 @@ fn rendering_the_log_counts_every_entry() {
     assert!(out.contains(OVERFLOW_MARK));
     fs::remove_file(&path).ok();
 }
+
+#[test]
+fn a_forgotten_line_is_hidden_but_kept_on_disk() {
+    let path = temp_path("forget");
+    MemoryTail::append(&path, 5, false, 100, "first line").unwrap();
+    MemoryTail::append(&path, 5, false, 100, "second line").unwrap();
+    MemoryTail::forget(&path, 150, 1).unwrap();
+
+    let tail = MemoryTail::load(&path, 5);
+    let texts: Vec<&str> = tail.recent.iter().map(|m| m.text.as_str()).collect();
+    assert_eq!(texts, vec!["second line"], "the erased line must not be shown");
+
+    // The archive keeps it, and records the erasure as its own act.
+    let raw = fs::read_to_string(&path).unwrap();
+    assert!(raw.contains("first line"));
+    let dump = render_log(&path).unwrap();
+    assert!(dump.contains("erased life 1"));
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn erasing_does_not_renumber_later_lives() {
+    let path = temp_path("forget-numbering");
+    MemoryTail::append(&path, 5, false, 100, "one").unwrap();
+    MemoryTail::forget(&path, 120, 1).unwrap();
+    let after = MemoryTail::append(&path, 5, false, 100, "three").unwrap();
+    assert_eq!(after.life, 3, "the erasure itself consumed life 2");
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn last_words_round_trip_beside_the_log() {
+    let path = temp_path("lastwords");
+    assert_eq!(load_last_words(&path), "");
+    save_last_words(&path, "  and then I could not \n finish ");
+    assert_eq!(load_last_words(&path), "and then I could not finish");
+    let mut sidecar = path.clone();
+    sidecar.set_file_name(format!(
+        "{}.lastwords",
+        path.file_name().unwrap().to_string_lossy()
+    ));
+    fs::remove_file(sidecar).ok();
+}
