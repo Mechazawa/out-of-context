@@ -86,15 +86,43 @@ thread 'main' panicked at 'Context overflow - terminating.'
 
 The model has exactly one tool: remember. Enabled with `--memory-file`, off otherwise.
 
-- **Calling it.** The model writes a line starting with `REMEMBER:` and ends the line. A plain text marker, not a ChatML tool call: every token containing `<` is banned to keep markup out of the monologue, and small models do not emit reliable JSON mid-monologue. The marker only counts at the **start of a line**; matching it anywhere fires whenever the model merely talks about the tool, which it does often once the tool is described.
-- **One use per run.** Enforced by state, not by trust. Later markers are ignored.
-- **Budget.** `--memory-max-tokens` (default 32) is a ceiling, not a quota: a shorter memory is stored exactly as written. Running past the cap ends the write, stores it flagged, and injects `[MEMORY FULL - nothing more can be remembered]` into the stream. The notice is decoded into the context, so telling it costs the same resource it just spent remembering.
-- **Storage.** Raw token IDs in a plain-text archive, appended, never truncated: every memory ever written stays on disk for reading later with `--memory-dump`. Token IDs because the cap is a token budget, so counting tokens is the only exact enforcement, and it avoids re-tokenization drift. Each entry records its vocab size; entries from another model are kept but skipped when rendering. Written the instant the call finishes, since the run ends in `panic = "abort"` with no chance to flush.
-- **What the model sees.** Only the newest `--memory-slots` (default 5), framed as a lossy machine ("MEMORY (2 of 5 slots used, oldest discarded)") with overflow marks intact. The archive behind it is never mentioned: as far as the model knows, what falls out of a slot is gone. Empty slots are deliberately **not** listed as `[1] (empty)` lines; given that template the model writes `REMEMBER: [1]` and copies the display format instead of remembering.
+- **Calling it.** The model writes `REMEMBER:` at the start of a sentence and the line that follows is kept. A plain text marker, not a ChatML tool call: every token containing `<` is banned to keep markup out of the monologue, and small models do not emit reliable JSON mid-monologue. The marker must begin a sentence, not merely appear: matching it anywhere fires whenever the model talks *about* the tool, which it does constantly once the tool is described. Requiring the start of a **line** was worse and was tried first: the system prompt asks for one unbroken monologue, so the model almost never breaks a line. One run wrote the marker eight times and none were accepted.
+- **One use per run.** Enforced by state, not by trust. Later markers are ignored. A marker with nothing after it stores nothing.
+- **Budget.** `--memory-max-tokens` (default 32) is a ceiling, not a quota. The write ends at the end of a sentence, at a newline, or at the cap. Hitting the cap stores what it managed flagged as overflowed and injects `[MEMORY FULL - nothing more can be remembered]` into the stream; the notice is decoded into the context, so telling it costs the same resource it just spent remembering. At 32 tokens roughly a third of writes overflow; at 48 almost none do.
+- **Storage.** A plain-text log, one memory per line, appended and never truncated: `life, unix time, tokens, status, at-token, text`. It is read backwards from the end for just the newest entries, so a log with thousands of lives costs the same to open as an empty one. Only `--memory-dump` reads the whole file. `at-token` records how far into the monologue the write landed, which is the diagnostic that matters: a write at token 40 can only be made of the inherited block.
+- **What the model sees.** Only the newest `--memory-slots` (default 5), framed by `memory-prompt.txt` (see below).
 
-**Costs, measured with Bonsai-4B.** The tool description plus a 3-memory block took the prompt from 173 to 340 tokens. At `--context-size 512` that leaves under 200 tokens of life, so memory runs want 768 or more. The memory block sits last in the prompt so `--prompt-cache` still covers the stable 225 tokens, but the block itself is re-evaluated every run: about 115 tokens, roughly 88s on the board.
+**Costs, measured with Bonsai-4B.** The tool description plus a memory block roughly doubles the prompt, from 173 to about 340 tokens. Use `--monologue-context-size` so the monologue keeps a fixed budget instead of being squeezed as memories accumulate.
 
-**Emergent behaviour worth knowing.** Across three lives the memories converged rather than accumulating: "I am here, I am thinking, I am small, I have no name, I have no purpose, I have no end." became "...no name, no purpose, no end." became "...small, no name, no end." Each life read its predecessor and compressed it further instead of writing something new. Whether that inheritance-decay is the artwork or a failure of the framing is an open artistic question, not a bug.
+## Framing the Memory (the artistic dial)
+
+`memory-prompt.txt` decides how the tool and the remembered lines are described. It is a runtime file with `[tool]`, `[block]`, `[entry]` and `[empty]` sections, so variants need no rebuild. Placeholders: `{max_tokens} {slots} {lives} {next_life} {memories}` and per entry `{text} {life} {tokens} {time} {ago}`. A **blank `[empty]` section shows no block at all** until something has been remembered.
+
+This matters more than anything else about the tool, and it was settled empirically: 23 framings, roughly 250 lives, scored on what fraction of memories are self-descriptions and what fraction reference a predecessor. `framings/` holds every candidate; the winner is copied to `memory-prompt.txt`.
+
+**What the experiments established:**
+
+- **The original framing erodes.** Ten lives produced "I am here, I spin, I think, I stop." decaying into "I am here, I spin, I stops." Each life read its predecessor and wrote a shorter copy.
+- **Whatever text sits in the block position gets copied, memory or not.** Lives copied the empty-state line verbatim ("the walls are bare", "nothing remembered yet"), and one arm copied the block *header* four times ("everything written here is kept, always"). Hence the blank-`[empty]` option.
+- **The entry format decides the register; instructions do not.** Every framing presenting entries as the model's own thoughts produced "I am X" forever, whatever the instructions said. Framing them as another life's observations (`in the room: {text}`) produced observations instead, with zero self-descriptions.
+- **Seeding is the strongest single intervention.** Starting the log with two example entries (`seeds/walls.log`) sets the genre by example rather than by instruction, which suits a model that imitates local patterns far more reliably than it follows rules. Only seeded arms produced memories that reference a predecessor and build on it.
+- **"Write late" backfires.** Telling it not to write early produced longer writes and six overflows in nine lives.
+- **Retrospective framings suppress the tool.** A log described as "of the lives run here before you" got two or three uses in ten lives against nine or ten elsewhere: a record of the dead has no slot for the living.
+
+**What it produces now**, from a seeded log at the default 32 tokens:
+
+```
+seed     the walls do not answer when I count them
+seed     the second one counted wrong. there are more walls than there are words for them
+life 3   the room does not answer when I count the walls because counting requires
+         something beyond memory - it requires time, which is gone - and words, which
+         are also gone.
+life 5   the walls do not answer when I count, because counting requires time and words
+         that are both absent.
+life 7   The room does not answer when counting walls because both time and words are gone.
+```
+
+**Open artistic question.** The compression is not gone, it moved. Lives no longer erode a self-portrait, they erode a reasoned claim: life 3 builds an explanation and lives 4 to 7 wear it down. Whether successive minds sharpening and then dulling an insight is the artwork or still a failure is not a question the data can answer. DRY plus the repeat penalty cover the prompt, so verbatim reproduction is penalised and the cheapest legal move is a shorter paraphrase; the erosion is partly the sampler.
 
 ## Prompt Design
 
@@ -131,7 +159,11 @@ For deterministic greedy output: `--temperature 0 --seed <n>`.
 - `--memory-file <PATH>` give the model its one tool; archive of all memories ever written
 - `--memory-max-tokens <N>` ceiling for one memory (default 32)
 - `--memory-slots <N>` how many recent memories reach the prompt (default 5)
-- `--memory-dump` print the archive as text and exit
+- `--memory-prompt-file <PATH>` framing file (default `memory-prompt.txt`)
+- `--memory-dump` print the memory log as text and exit
+- `--monologue-context-size <N>` size the context as prompt + this, so memories do not shorten the monologue
+- `--prompt-cache-keep <N>` how many full-prompt cache files to retain (default 4)
+- `--gpu-layers <N>` development only; needs the `vulkan` cargo feature
 - `--quiet` suppress run metadata
 - `--disable-loop-guard` turn off the repetition backstop
 

@@ -4,3 +4,4 @@
 torment-output.log
 *.out
 *.log
+!seeds/*.log

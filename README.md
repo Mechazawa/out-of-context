@@ -51,37 +51,42 @@ Building requires `cmake` and a C/C++ toolchain for llama.cpp.
 
 ## The One Tool
 
-With `--memory-file`, the model can remember. Once per life it may write a line starting `REMEMBER:` and up to 32 tokens will outlive it. Nothing else survives.
+With `--memory-file`, the model can remember. Once per life it may write `REMEMBER:` at the start of a sentence, and up to 32 tokens of that line outlive it. Nothing else survives.
 
 ```bash
-./out-of-context --model models/Bonsai-4B-Q1_0.gguf --context-size 768 \
-  --memory-file memories.txt --prompt-cache b4b.cache
-./out-of-context --model models/Bonsai-4B-Q1_0.gguf --memory-file memories.txt --memory-dump
+./out-of-context --model models/Bonsai-4B-Q1_0.gguf --monologue-context-size 340 \
+  --memory-file memories.log --prompt-cache cache/p
+./out-of-context --memory-file memories.log --memory-dump
 ```
 
-It is told the budget and that it has one use, but not how long it has to decide. Writing past the cap interrupts the call, stores what it managed with `- ERR MEMORY OVERFLOW`, and tells it that nothing more can be remembered. Delivering that message costs context, which is the same thing it was spending.
+It is told the budget and that it has one use, but not how long it has to decide. Writing past the cap interrupts the call, stores what it managed with `- ERR MEMORY OVERFLOW`, and tells it nothing more can be remembered. Delivering that message costs context, which is the same thing it was spending.
 
-The next life is shown the newest five memories as a lossy store, oldest discarded. Every memory ever written is kept on disk regardless, so the archive can be read afterwards even though the model believes the evicted ones are gone.
+The log is plain text, one memory per line, appended and never truncated, so it can be read afterwards. Runs only read the last few lines, from the end, so the log can grow without bound. `--memory-slots` (default 5) controls how many reach the prompt.
 
-Memory costs life: the tool description and the block roughly double the prompt, so use `--context-size 768` or more. In early testing the memories did not accumulate so much as erode, each life compressing its predecessor's sentence a little further.
+Memory roughly doubles the prompt, so use `--monologue-context-size` to keep the monologue's budget fixed as memories accumulate rather than letting them shorten each life.
 
-## Models
-Default Llama-3.2-1B-Instruct Q4_K_M (~770MB) gives the best monologue voice per unit of compute on this board. Lighter, faster fallbacks if the device is too slow or tight on memory: SmolLM2-360M-Instruct (~270MB), Qwen2.5-0.5B-Instruct (~400MB). Switch with `--model`; all settings work unchanged.
+### Framing is the whole game
 
-PrismML's 1-bit **Bonsai** family (Q1_0, Apache 2.0) also runs, and Bonsai-4B produces the strongest interior voice of anything tested: no audience-addressing, no assistant reflexes, and it inhabits the situation instead of restating it. The catch is speed. Measured on the board:
+`memory-prompt.txt` decides how the tool and the remembered lines are described, and it changes the output more than any other setting. It was chosen empirically across 23 candidate framings and roughly 250 lives; `framings/` holds them all.
 
-| model | file | peak RSS | speed |
-|---|---|---|---|
-| Llama-3.2-1B Q4_K_M | 808MB | 1318MB (x86) | 0.99 tok/s is the 4B figure; 1B not yet measured on-board |
-| Bonsai-4B Q1_0 | 572MB | 700MB | 0.99 tok/s, 0.71 words/sec |
-| Bonsai-1.7B Q1_0 | 248MB | 367MB (x86) | not yet measured on-board |
+The naive framing erodes: ten lives turned "I am here, I spin, I think, I stop." into "I am here, I spin, I stops." Each life read its predecessor and wrote a shorter copy. Three findings fixed it:
 
-```bash
-./out-of-context --model models/Bonsai-4B-Q1_0.gguf \
-  --temperature 0.6 --top-k 20 --top-p 0.9 --prompt-cache b4b.cache
+- Whatever text sits in the memory-block position gets copied, memory or not. Lives copied the empty-state line and even the block header. A blank `[empty]` section now shows no block at all until something exists.
+- The entry format decides the register and instructions do not. Presenting entries as the model's own thoughts produces "I am X" forever; presenting them as another life's observations produces observations.
+- Seeding the log with two example entries (`seeds/walls.log`) is the strongest single intervention, because this model imitates local patterns far more reliably than it follows rules.
+
+Together those produce lives that build on each other:
+
+```
+seed     the walls do not answer when I count them
+seed     the second one counted wrong. there are more walls than there are words for them
+life 3   the room does not answer when I count the walls because counting requires
+         something beyond memory - it requires time, which is gone - and words, which
+         are also gone.
+life 7   The room does not answer when counting walls because both time and words are gone.
 ```
 
-On a Cortex-A53, generation speed tracks parameter count rather than bits per weight: 1-bit quantization cuts memory, not the multiply-accumulate count, and ARMv8.0 has no `SDOT` instruction. Bonsai's published throughput figures come from GPUs and from phone SoCs with dotprod, so they do not transfer. Q1_0 needs `llama-cpp-2` 0.1.153 or newer.
+The compression did not disappear, it moved: lives now erode a reasoned claim instead of a self-portrait. Whether that is the artwork or still a failure is an open question, not a solved one.
 
 ## Notes
 - `prompt.txt` is read at runtime; edit it to retune the voice. It is intentionally brief.

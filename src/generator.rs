@@ -587,6 +587,17 @@ fn commit_memory(
     at_token: usize,
     cfg: &GenerationConfig,
 ) -> Result<()> {
+    // A marker with nothing after it is not a memory. Storing one would also
+    // break the life numbering, since an entry with no text cannot be read back
+    // and the next life would reuse its number.
+    if text.trim().is_empty() {
+        text.clear();
+        if !cfg.quiet {
+            eprintln!("\n[remembered nothing]");
+        }
+        return Ok(());
+    }
+
     let written = MemoryTail::append(&mem.path, tokens, overflowed, at_token, text)?;
     text.clear();
     if !cfg.quiet {
