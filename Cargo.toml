@@ -27,6 +27,9 @@ indicatif = "0.17"
 # Error Handling
 anyhow = "1.0"
 
+# Token decoding (same version llama-cpp-2 uses internally)
+encoding_rs = "0.8"
+
 # Timestamps in the memory log
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 

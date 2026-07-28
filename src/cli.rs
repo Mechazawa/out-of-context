@@ -149,6 +149,19 @@ pub struct Args {
     #[arg(long, default_value = "memory-prompt.txt")]
     pub memory_prompt_file: PathBuf,
 
+    /// How much of a remembered line is lost per slot of age, 0 to 1. At 0.2 the
+    /// newest memory is intact and the fifth has lost most of itself. The log on
+    /// disk always keeps the pristine text; only what the model is shown decays.
+    #[arg(long, default_value_t = 0.0)]
+    pub memory_decay: f32,
+
+    /// Refuse a memory whose word overlap with one already in the record reaches
+    /// this, 0 to 1. The life is told nothing was kept, and has spent its only
+    /// line. 0 accepts anything. Around 0.6 catches a restatement with a couple
+    /// of words changed while leaving a genuine reply alone.
+    #[arg(long, default_value_t = 0.0)]
+    pub memory_reject_above: f32,
+
     /// Print the memory log and exit. Requires --memory-file.
     #[arg(long)]
     pub memory_dump: bool,

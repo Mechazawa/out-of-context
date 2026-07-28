@@ -238,3 +238,7 @@ pub fn format_time(unix: u64) -> String {
         .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
         .unwrap_or_else(|| "unknown".to_string())
 }
+
+#[cfg(test)]
+#[path = "memory_tests.rs"]
+mod tests;

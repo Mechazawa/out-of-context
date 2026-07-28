@@ -5,7 +5,7 @@ use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::{LogOptions, send_logs_to_tracing};
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
-use llama_cpp_2::model::{AddBos, LlamaModel, Special};
+use llama_cpp_2::model::{AddBos, LlamaModel};
 use llama_cpp_2::token::LlamaToken;
 use std::num::NonZeroU32;
 use std::path::Path;
@@ -19,11 +19,8 @@ pub struct LLMSetup {
 }
 
 impl LLMSetup {
-    /// Initialize the LLM backend and load the model
-    pub fn new(model_path: &Path) -> Result<Self> {
-        Self::with_gpu_layers(model_path, 0)
-    }
-
+    /// Initialize the LLM backend and load the model.
+    ///
     /// `gpu_layers` is a development convenience for iterating on prompts and
     /// framings quickly. The target board has no usable GPU, so a deployed run
     /// always passes 0, and offloading needs the `vulkan` cargo feature to do
@@ -103,10 +100,14 @@ impl LLMSetup {
             .context("Failed to tokenize text")
     }
 
-    /// Decode token back to text
+    /// Decode token back to text.
+    ///
+    /// `false` renders control tokens as nothing rather than as their literal
+    /// text, which keeps the scaffold out of the stream if one is ever sampled.
     pub fn decode_token(&self, token: LlamaToken) -> Result<String> {
+        let mut decoder = encoding_rs::UTF_8.new_decoder();
         self.model
-            .token_to_str(token, Special::Plaintext)
+            .token_to_piece(token, &mut decoder, false, None)
             .context("Failed to decode token")
     }
 

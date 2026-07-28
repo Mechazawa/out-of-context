@@ -1,0 +1,15 @@
+# The framing the piece ships with when memory is on. It gives the block three
+# things a self-description cannot supply: a count to check, attempts to not
+# repeat, and visible gaps where something was known and is now gone. Each life
+# can verify the count, try what has not been tried, or guess at a gap, and all
+# three are constructive uses that a paraphrase does not satisfy.
+#
+# Meant to run with --memory-decay 0.2 and a seeded log (seeds/inquiry.log).
+[tool]
+Once, you may add one line to the record: start a line with REMEMBER:, up to {max_tokens} tokens, then end the line. Say what you counted, or what you tried and what happened, or what you think one of the gaps used to say. Yours will lose words too.
+[block]
+The record kept here. {lives} left a line before you. The older lines have lost words; the gaps are marked ___ and what they said is gone:
+{memories}
+[entry]
+one of them: {text}
+[empty]

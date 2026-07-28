@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::llm::{LLMSetup, LlamaBatchWrapper};
-use crate::framing::Framing;
+use crate::framing::{DECAY_GAP, Framing};
 use crate::memory::MemoryTail;
 use crate::output::OutputTarget;
 
@@ -58,6 +58,36 @@ pub struct MemoryConfig {
     pub max_tokens: usize,
     pub slots: usize,
     pub framing: Framing,
+    /// Fraction of a remembered line lost per slot of age. 0 keeps them intact.
+    pub decay: f32,
+    /// Word overlap above which a memory counts as something already known and
+    /// is refused. 0 accepts anything.
+    pub reject_above: f32,
+}
+
+/// Shown to the model when what it wrote was already in the record. It spent its
+/// one line and kept nothing, which is the cost of not reading before writing.
+const MEMORY_KNOWN_NOTICE: &str = "\n[ALREADY KNOWN - nothing was kept]\n";
+
+/// Word overlap between two lines, ignoring case and order.
+///
+/// Deliberately crude. The failure it has to catch is a life storing its
+/// predecessor's line back with two words changed, and set overlap catches that
+/// while leaving a genuine reply to the same subject alone.
+fn overlap(a: &str, b: &str) -> f32 {
+    let words = |t: &str| -> std::collections::HashSet<String> {
+        t.to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.len() > 2)
+            .map(str::to_string)
+            .collect()
+    };
+    let (x, y) = (words(a), words(b));
+    if x.is_empty() || y.is_empty() {
+        return 0.0;
+    }
+    let shared = x.intersection(&y).count() as f32;
+    shared / x.union(&y).count() as f32
 }
 
 /// The prompt, tokenized and split at the boundary the cache can be cut at.
@@ -145,7 +175,8 @@ pub fn prepare_prompt(
         Some(mem) => {
             let tail = MemoryTail::load(&mem.path, mem.slots);
             (
-                mem.framing.block(&tail.recent, mem.slots, tail.lives),
+                mem.framing
+                    .block(&tail.recent, mem.slots, tail.lives, mem.decay),
                 Some(mem.framing.tool(mem.max_tokens, mem.slots, tail.lives)),
                 tail.lives,
             )
@@ -344,7 +375,8 @@ pub fn generate_infinite(
                             memory_text.push_str(&token_text);
                             memory_count += 1;
                         }
-                        commit_memory(mem, &mut memory_text, memory_count, false, generated_tokens, cfg)?;
+                        injection =
+                            commit_memory(mem, &mut memory_text, memory_count, false, generated_tokens, cfg)?;
                         memory_state = MemoryState::Done;
                     } else {
                         memory_text.push_str(&token_text);
@@ -586,7 +618,27 @@ fn commit_memory(
     overflowed: bool,
     at_token: usize,
     cfg: &GenerationConfig,
-) -> Result<()> {
+) -> Result<Option<&'static str>> {
+    // The model copies the decay markers it is shown straight back into its own
+    // memory ("one tried: ___ thinking in ___ words"). Seeing the rot is the
+    // point; recording it is not, because the gaps would then compound into
+    // noise instead of decaying from something that was once whole.
+    let prefix = mem.framing.entry_prefix();
+    let mut cleaned = text.replace(DECAY_GAP, " ");
+    // The entry prefix is display, not content; the model copies it anyway.
+    if !prefix.is_empty() {
+        let trimmed = cleaned.trim_start();
+        if let Some(rest) = trimmed.strip_prefix(prefix.as_str()) {
+            cleaned = rest.to_string();
+        }
+    }
+    let cleaned = cleaned
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    text.clear();
+    text.push_str(&cleaned);
+
     // A marker with nothing after it is not a memory. Storing one would also
     // break the life numbering, since an entry with no text cannot be read back
     // and the next life would reuse its number.
@@ -595,7 +647,29 @@ fn commit_memory(
         if !cfg.quiet {
             eprintln!("\n[remembered nothing]");
         }
-        return Ok(());
+        return Ok(None);
+    }
+
+    // Refuse a line that is already in the record. Without this the strongest
+    // behaviour available to the model, restating the newest line it was shown,
+    // is also the one that persists, and the record fills with one sentence
+    // wearing down. Refusing it costs the life its only line.
+    if mem.reject_above > 0.0 {
+        let seen = MemoryTail::load(&mem.path, mem.slots);
+        if let Some(known) = seen
+            .recent
+            .iter()
+            .find(|m| overlap(&m.text, text) >= mem.reject_above)
+        {
+            if !cfg.quiet {
+                eprintln!(
+                    "\n[refused: too close to what life {} already kept]",
+                    known.life
+                );
+            }
+            text.clear();
+            return Ok(Some(MEMORY_KNOWN_NOTICE));
+        }
     }
 
     let written = MemoryTail::append(&mem.path, tokens, overflowed, at_token, text)?;
@@ -608,7 +682,7 @@ fn commit_memory(
             if overflowed { ", cut off" } else { "" }
         );
     }
-    Ok(())
+    Ok(None)
 }
 
 fn build_prompt(
@@ -752,10 +826,12 @@ fn build_logit_biases(llm_setup: &LLMSetup) -> Result<Vec<LlamaLogitBias>> {
         biases.push(LlamaLogitBias::new(token, f32::NEG_INFINITY));
     }
 
-    // Soft discouragement: staged-dialogue quotes and theatrical "(stage
-    // directions)", without fully banning the glyphs (apostrophes/contractions
-    // use a different character and must stay available).
-    for marker in ["\"", "\u{201c}", "\u{201d}", "(", " ("] {
+    // Soft discouragement: staged-dialogue quotes, theatrical "(stage
+    // directions)", and markdown emphasis, without fully banning the glyphs
+    // (apostrophes/contractions use a different character and must stay
+    // available). Bonsai-4B reaches for *italics* in particular, which reads as
+    // formatted output rather than thought.
+    for marker in ["\"", "\u{201c}", "\u{201d}", "(", " (", "*", " *", "**"] {
         for token in llm_setup.tokenize(marker, false)? {
             biases.push(LlamaLogitBias::new(token, -6.0));
         }
