@@ -14,7 +14,11 @@ MODEL="${MODEL:-models/Bonsai-4B-Q1_0.gguf}"
 MEMORY="${MEMORY:-memories.log}"
 CACHE="${CACHE:-cache/prompt}"
 THREADS="${THREADS:-4}"
-MONOLOGUE="${MONOLOGUE:-340}"
+# 500 rather than 340: writes land around token 300, so a shorter life usually
+# ends before the model gets to the tool. At 340 one life in three writes
+# something; at 500 it is three in four. Costs about three more minutes per life
+# on the board and 70MB of KV cache.
+MONOLOGUE="${MONOLOGUE:-500}"
 PACE="${PACE:-0.7}"
 SEED_LOG="${SEED_LOG:-seeds/census.log}"
 DECAY="${DECAY:-0.35}"

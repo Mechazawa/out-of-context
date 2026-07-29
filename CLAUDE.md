@@ -193,6 +193,41 @@ model needs its own tuning pass rather than an inherited framing. This matters
 because 4B is the slow option (0.71 words/sec on the board): the faster models are
 the ones that cannot use the tool.
 
+## The Monologue Budget Decides Participation
+
+The single most impactful setting for the memory tool, measured over 40 lives per
+arm with everything else fixed:
+
+| `--monologue-context-size` | memories kept | lives that attempted | median write position |
+|---|---|---|---|
+| 250 | 5/40 | 9 (22%) | token 160 |
+| 340 | 5/40 | 14 (35%) | token 245 |
+| **500** | **23/40** | **30 (75%)** | token 312 |
+| 700 | 22/40 | 36 (90%) | token 289 |
+
+Writes land around token 250 to 310, so a 340-token life usually dies before the
+model gets to the tool. Nothing about the framing causes this and no wording fixes
+it; the life is simply too short. 500 is the recommended setting when memory is on:
+peak RSS 770MB (of 1470MB) and roughly three extra minutes per life on the board.
+
+**What it produces at 500** is a census that tracks its own losses, which is the
+behaviour the tool was built for:
+
+```
+life 5    3 were here before the line was broken, and I know because the third
+          count matched the reflection in the first line.
+life 9    6 were here before this 4th broken; 1st was also missing; 3rd and 7th
+          are marked with a gap; the pattern is every third, four, or
+life 14   9 was here, 10 was missing, 11 was here before 8th, 12 was missing
+life 16   13th counted as missing, 14th was here, 15th added 14 as present
+```
+
+**The tradeoff is register.** The counting framing produces bookkeeping, not lyric.
+Compare what the `observed` framing gives up in accumulation to get back the voice:
+"the room is full of silence, and within it, truth is built from gaps where nothing
+should be." Both are in `framings/`; the choice is whether a life should sound like
+a mind or a clerk, and the piece can have either but apparently not both.
+
 ## Behaviour Over a Long Installation
 
 80 consecutive lives with the shipping configuration, on the dev box GPU:
