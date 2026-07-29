@@ -1,6 +1,8 @@
 /target
 /target-gpu
 /models
+/cache
+memories*.log
 torment-output.log
 *.out
 *.log
