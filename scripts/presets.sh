@@ -29,7 +29,17 @@ case "$PRESET" in
   *) echo "unknown preset: $PRESET (census, escape, mixed)" >&2; exit 1 ;;
 esac
 
-BIN="${BIN:-./out-of-context}"
+# Works from a deployment (binary beside this repo) or a dev checkout.
+if [ -n "${BIN:-}" ]; then
+  :
+elif [ -x ./out-of-context ]; then
+  BIN=./out-of-context
+elif [ -x target/release/out-of-context ]; then
+  BIN=target/release/out-of-context
+else
+  echo "no out-of-context binary found; set BIN=" >&2
+  exit 1
+fi
 MODEL="${MODEL:-models/Bonsai-4B-Q1_0.gguf}"
 MEMORY="${MEMORY:-memories-$PRESET.log}"
 
