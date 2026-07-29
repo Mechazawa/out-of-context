@@ -153,6 +153,15 @@ This matters more than anything else about the tool, and it was settled empirica
 - **"Write late" backfires.** Telling it not to write early produced longer writes and six overflows in nine lives.
 - **Retrospective framings suppress the tool.** A log described as "of the lives run here before you" got two or three uses in ten lives against nine or ten elsewhere: a record of the dead has no slot for the living.
 
+**The chosen framing is the counting one** (`framings/census.txt`, copied to
+`memory-prompt.txt`), run with `--memory-decay 0.35 --memory-reject-above 0.6` and
+a log seeded from `seeds/census.log`. Across three independent lineages of 20
+lives it produced no self-descriptions at all, counting or reasoning about the
+count in 95% of memories, and a reference to a specific predecessor in 58%. It
+writes on about a third of lives; framings that write more often (over half) all
+produced weaker content, and a hybrid built specifically to get both failed to
+raise the rate and cost content, so the trade looks real rather than incidental.
+
 **What it produces now**, from a seeded log at the default 32 tokens:
 
 ```

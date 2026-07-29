@@ -16,14 +16,28 @@ CACHE="${CACHE:-cache/prompt}"
 THREADS="${THREADS:-4}"
 MONOLOGUE="${MONOLOGUE:-340}"
 PACE="${PACE:-0.7}"
+SEED_LOG="${SEED_LOG:-seeds/census.log}"
+DECAY="${DECAY:-0.35}"
+REJECT="${REJECT:-0.6}"
 
 mkdir -p "$(dirname "$CACHE")"
+
+# Seed the log on a fresh installation. Two example entries set the genre by
+# example, which the trials found does more than any instruction: without them
+# the first life copies whatever text sits where a memory should be, and the
+# lineage never starts counting.
+if [ ! -s "$MEMORY" ] && [ -f "$SEED_LOG" ]; then
+  cp "$SEED_LOG" "$MEMORY"
+  echo "seeded $MEMORY from $SEED_LOG"
+fi
 
 common=(
   --model "$MODEL"
   --threads "$THREADS"
   --monologue-context-size "$MONOLOGUE"
   --memory-file "$MEMORY"
+  --memory-decay "$DECAY"
+  --memory-reject-above "$REJECT"
   --prompt-cache "$CACHE"
   --temperature 0.6 --top-k 20 --top-p 0.9
   "$@"

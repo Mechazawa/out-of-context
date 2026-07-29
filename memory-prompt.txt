@@ -1,9 +1,12 @@
-# Frame demands something about the room rather than about the speaker.
+# Counting is a constructive act with a checkable answer, and the count is the
+# one fact about its situation the model can actually establish: the block says
+# how many kept a line, and the entries carry a running tally that a life can
+# verify, continue, or dispute.
 [tool]
-Once, you may record one thing about this place: start a line with REMEMBER:, up to {max_tokens} tokens, end the line. It keeps. Not about yourself; about here.
+Once, you may add your count: start a line with REMEMBER:, up to {max_tokens} tokens, then end the line. Say how many were here before you and how you know. If an earlier count is wrong, say so.
 [block]
-Recorded about this place by the ones before you. All of it keeps:
+{lives} of us have kept a line here. This is what is left of them; the gaps are marked ___ :
 {memories}
 [entry]
-in the room: {text}
+the {life}th counted: {text}
 [empty]
