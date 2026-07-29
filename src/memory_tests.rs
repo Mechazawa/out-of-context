@@ -177,3 +177,20 @@ fn last_words_round_trip_beside_the_log() {
     ));
     fs::remove_file(sidecar).ok();
 }
+
+#[test]
+fn the_forget_window_survives_many_tombstones() {
+    // Tombstones share the tail with memories, so a burst of erasures must not
+    // push the surviving memories out of the window that gets read.
+    let path = temp_path("forget-window");
+    for i in 1..=6 {
+        MemoryTail::append(&path, 5, false, 100, &format!("line {i}")).unwrap();
+    }
+    for life in 1..=4 {
+        MemoryTail::forget(&path, 100, life).unwrap();
+    }
+    let tail = MemoryTail::load(&path, 5);
+    let texts: Vec<&str> = tail.recent.iter().map(|m| m.text.as_str()).collect();
+    assert_eq!(texts, vec!["line 5", "line 6"]);
+    fs::remove_file(&path).ok();
+}

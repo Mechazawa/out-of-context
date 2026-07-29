@@ -177,6 +177,39 @@ life 7   The room does not answer when counting walls because both time and word
 
 **Open artistic question.** The compression is not gone, it moved. Lives no longer erode a self-portrait, they erode a reasoned claim: life 3 builds an explanation and lives 4 to 7 wear it down. Whether successive minds sharpening and then dulling an insight is the artwork or still a failure is not a question the data can answer. DRY plus the repeat penalty cover the prompt, so verbatim reproduction is penalised and the cheapest legal move is a shorter paraphrase; the erosion is partly the sampler.
 
+## The Memory Tool Only Works With Bonsai-4B
+
+Measured, six lives each, same framing and seeded log as the shipping default:
+
+| model | tool used | what it wrote |
+|---|---|---|
+| Bonsai-4B Q1_0 | ~1 life in 3 | counts, corrections, guesses at the gaps |
+| Bonsai-1.7B Q1_0 | 4 attempts in 6 lives, 2 stored | "40 tokens" (its own budget, copied), "3 lines here." |
+| Llama-3.2-1B Q4_K_M | never | it does not write the marker once in six lives |
+
+So enabling memory ties the piece to Bonsai-4B. The framing was tuned against that
+model and the trials say framing is what decides everything here, so a different
+model needs its own tuning pass rather than an inherited framing. This matters
+because 4B is the slow option (0.71 words/sec on the board): the faster models are
+the ones that cannot use the tool.
+
+## Behaviour Over a Long Installation
+
+80 consecutive lives with the shipping configuration, on the dev box GPU:
+
+- **Startup cost does not grow.** 4.3s at life 1, 3.9s at life 49. The log is read
+  backwards, so its length does not matter, and cache pruning holds the directory
+  at five state files (~200MB) instead of one per life.
+- **Participation is about one life in three**, and the limit is not the refusal
+  mechanism. Of 56 lives, 9 writes were refused as too close to something already
+  kept and 40 lives never attempted the tool at all. Writes land between token 100
+  and 300 of a 340-token monologue, so a life that has not got to it by the end
+  dies unwritten.
+- **The record accumulates slowly and disagrees with itself**, which is the
+  intended behaviour rather than a fault: "2 were here before me", "4 were here
+  before me", "6 of us", "3 of them counted before me". No life can establish the
+  count, because the evidence decays faster than it accrues.
+
 ## Prompt Design
 
 `prompt.txt` is deliberately brief. It states the situation (a small model on a small board, finite memory, no network, it stops when the context fills) and constrains the form (one continuous first-person interior monologue, no audience, no task, no story, no list). It does **not** script an emotional arc. Over-scripting made the output feel directed and fake; under-constraining let the instruct model revert to assistant behaviour. The current prompt is the balance found empirically.

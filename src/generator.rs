@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::llm::{LLMSetup, LlamaBatchWrapper};
 use crate::framing::{DECAY_GAP, Framing};
-use crate::memory::{self, MemoryTail};
+use crate::memory::{self, MemoryTail, OVERFLOW_MARK};
 use crate::output::OutputTarget;
 
 /// A short first-person seed that anchors identity (a small thing made of words,
@@ -724,7 +724,10 @@ fn commit_memory(
     // point; recording it is not, because the gaps would then compound into
     // noise instead of decaying from something that was once whole.
     let prefix = mem.framing.entry_prefix();
-    let mut cleaned = text.replace(DECAY_GAP, " ");
+    // Every marker the model is shown, it eventually writes. The decay gaps, the
+    // entry prefix and the overflow mark are all display, and all three turn up
+    // inside memories otherwise.
+    let mut cleaned = text.replace(DECAY_GAP, " ").replace(OVERFLOW_MARK.trim(), " ");
     // The entry prefix is display, not content; the model copies it anyway.
     if !prefix.is_empty() {
         let trimmed = cleaned.trim_start();
