@@ -65,6 +65,29 @@ The log is plain text, one memory per line, appended and never truncated, so it 
 
 Memory roughly doubles the prompt, so use `--monologue-context-size` to keep the monologue's budget fixed as memories accumulate rather than letting them shorten each life.
 
+### Three collective projects
+
+`scripts/presets.sh <census|escape|mixed>` picks what the lives collectively do
+with their memory. All three were chosen by testing, and all three eventually
+erode into fragments.
+
+- **census** keeps a census that tracks its own losses. Accumulates best, reads
+  driest: *"9 was here, 10 was missing, 11 was here before 8th, 12 was missing"*.
+- **escape** becomes an archaeology of its own decayed memory: *"I tried to recall
+  the last sentence of the others, but the gaps were too deep."*
+- **mixed** carries an argument about meaning across lives, and writes most often:
+  *"Time is not a river, because rivers don't carry time, they carry change."*
+
+Three settings shape how cruel the memory is, all off by default:
+`--memory-decay` rots the older lines (the disk log stays pristine),
+`--memory-reject-above` refuses a restatement and costs the life its only use, and
+`--memory-forget` adds a second tool that erases an inherited line instead of
+adding one. `--monologue-context-size 500` matters most of all: writes land around
+token 300, so shorter lives usually die before the model gets to the tool.
+
+Note that the tool only works with Bonsai-4B. Llama-3.2-1B never writes the marker
+at all, and Bonsai-1.7B copies its own token budget into the record.
+
 ### Framing is the whole game
 
 `memory-prompt.txt` decides how the tool and the remembered lines are described, and it changes the output more than any other setting. It was chosen empirically across 23 candidate framings and roughly 250 lives; `framings/` holds them all.

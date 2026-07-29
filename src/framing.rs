@@ -214,8 +214,14 @@ impl Framing {
             memories
                 .iter()
                 .enumerate()
-                .map(|(i, m)| {
-                    let shown = Self::decay(&m.display(), newest - i, decay_rate);
+                .map(|(i, m)| (Self::decay(&m.display(), newest - i, decay_rate), m))
+                // A line that has lost every word is noise, and the model copies
+                // the gap markers back into its own memories. Once nothing is
+                // left of a line it is simply gone, which is also the truer thing
+                // to show: what fully decayed is not a redacted memory, it is an
+                // absence.
+                .filter(|(shown, _)| shown.split_whitespace().any(|w| w != DECAY_GAP))
+                .map(|(shown, m)| {
                     substitute(
                         &self.entry,
                         &[

@@ -152,3 +152,13 @@ fn parse_framing(body: &str) -> Framing {
     std::fs::remove_file(&path).ok();
     framing
 }
+
+#[test]
+fn a_fully_decayed_line_is_dropped_rather_than_shown_as_gaps() {
+    // All that is left of it would be gap markers, which the model copies back
+    // into its own memories. An absence is truer than a redaction.
+    let framing = parse_framing("[block]\nHEAD:\n{memories}\n[entry]\n> {text}\n[empty]\nnone\n");
+    let block = framing.block(&[memory(1, "one two three"), memory(2, "kept line")], 5, 2, 1.0, "");
+    assert!(block.contains("kept line"));
+    assert_eq!(block.matches('>').count(), 1, "only the intact line should appear: {block}");
+}
