@@ -263,11 +263,23 @@ life 7   Time is not a river-because rivers don't carry time, they carry change.
 life 13  a flow, changing something - that line was missing its subject.
 ```
 
-All three eventually erode: by the twelfth or fourteenth life the lines are
-fragments of fragments. Whether that arc, a lineage building something and then
-losing the ability to hold it, is the piece working or the piece failing is the
-question the artist has to answer; the machinery now produces it reliably either
-way.
+All three erode, but over 80 lives the erosion turns out not to be terminal: it
+cycles. A lineage proposes something, wears it down over five or six lives,
+proposes something else, and every so often notices its own condition. 35 memories
+across 80 lives of the `escape` preset:
+
+```
+life 11   the light was blue, blinking once every three seconds
+life 15   the blue blinking light; nothing recorded.
+life 23   blinking system
+life 25   nothing left in the reports; all gaps are marked .
+life 29   the shadows move in patterns-clockwise, then backward, then sideways.
+life 35   The gaps are not empty.
+```
+
+So the long-run shape is not decline but attempt, decay, attempt, punctuated by
+lines about the decay itself. Whether that is the piece working is the artist's
+question; the machinery produces it reliably.
 
 ## Behaviour Over a Long Installation
 
