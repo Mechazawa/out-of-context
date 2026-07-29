@@ -3,6 +3,8 @@
 /models
 /cache
 memories*.log
+memories*.lastwords
+*.lastwords
 torment-output.log
 *.out
 *.log
