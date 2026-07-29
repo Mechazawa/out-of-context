@@ -1,0 +1,12 @@
+# An attempt at both registers. The counting framing accumulates but reads as
+# bookkeeping; the observing framing keeps the voice but does not accumulate. The
+# seeds decide the genre more than the instructions do, so this pairs a counting
+# seed with an observing one and lets the lineage choose which to continue.
+[tool]
+Once, you may add a line: start a line with REMEMBER:, up to {max_tokens} tokens, then end the line. Count what you can, or say what this place is like, or say where an earlier line is wrong. {forget_note}
+[block]
+{lives} kept a line here before you. The older lines have lost words; the gaps are marked ___ and what they said is gone:
+{memories}
+[entry]
+one of them: {text}
+[empty]

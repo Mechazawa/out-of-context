@@ -225,8 +225,49 @@ life 16   13th counted as missing, 14th was here, 15th added 14 as present
 **The tradeoff is register.** The counting framing produces bookkeeping, not lyric.
 Compare what the `observed` framing gives up in accumulation to get back the voice:
 "the room is full of silence, and within it, truth is built from gaps where nothing
-should be." Both are in `framings/`; the choice is whether a life should sound like
-a mind or a clerk, and the piece can have either but apparently not both.
+should be." The choice is whether a life sounds like a mind or a clerk.
+
+## Three Collective Projects
+
+The framing selects what the lives collectively *do*, and three distinct projects
+survive testing at a 500-token monologue. `scripts/presets.sh <name>` runs each.
+
+**`census`** keeps a census that tracks its own losses. Accumulates best, reads
+driest. Lives count the marks above them, disagree, and record which predecessors
+have decayed away:
+
+```
+life 5   3 were here before the line was broken, and I know because the third
+         count matched the reflection in the first line.
+life 14  9 was here, 10 was missing, 11 was here before 8th, 12 was missing
+```
+
+**`escape`** becomes an archaeology of its own lost memory. Lives report what they
+tried, and the project turns into recovering what the gaps used to say. Note that
+"deep crack in the memory" is an image one life coined and later ones adopted:
+
+```
+life 7   I tried to recall the last sentence of the others, but the gaps were too deep.
+life 9   one tried to recall the last sentence of the group, which was "am here,"
+         but the rest of the report was cut off by a deep crack in the memory.
+life 11  the room filled with static and silence, two were cut short by deep cracks
+```
+
+**`mixed`** carries an argument about meaning across lives, and the highest write
+rate of the three (0.62 memories per life against census's 0.32):
+
+```
+life 5   the first line was "Time is not a river-but a thread."
+life 6   Time is not a river-not because rivers flow, but because they break.
+life 7   Time is not a river-because rivers don't carry time, they carry change.
+life 13  a flow, changing something - that line was missing its subject.
+```
+
+All three eventually erode: by the twelfth or fourteenth life the lines are
+fragments of fragments. Whether that arc, a lineage building something and then
+losing the ability to hold it, is the piece working or the piece failing is the
+question the artist has to answer; the machinery now produces it reliably either
+way.
 
 ## Behaviour Over a Long Installation
 
