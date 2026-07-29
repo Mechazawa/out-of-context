@@ -368,7 +368,7 @@ For deterministic greedy output: `--temperature 0 --seed <n>`.
 - `--opener-file <PATH>` pool of first lines (default `openers.txt`)
 - `--monologue-context-size <N>` size the context as prompt + this, so memories do not shorten the monologue
 - `--prompt-cache-keep <N>` how many full-prompt cache files to retain (default 4)
-- `--gpu-layers <N>` development only; needs the `vulkan` cargo feature
+- `--gpu-layers <N>` development only; works out of the box on macOS (Metal), needs the `vulkan` cargo feature elsewhere
 - `--quiet` suppress run metadata
 - `--disable-loop-guard` turn off the repetition backstop
 
@@ -390,6 +390,37 @@ cargo build --release
 cargo run --release -- --help
 ```
 Requires clang (llama-cpp-2 bindgen) and a C/C++ toolchain.
+
+### macOS dev box (Metal, no feature flag)
+A plain `cargo build --release` on macOS already links Metal, so `--gpu-layers 99`
+offloads with nothing added. llama.cpp defaults `GGML_METAL=ON` for every Apple
+target and `llama-cpp-sys-2` links the Metal and MetalKit frameworks there
+unconditionally; it only forces the backend off for watchOS. **Do not add a
+`metal` cargo feature.** `llama-cpp-2` exposes one, but at 0.1.153 the sys crate's
+build script never reads `cfg!(feature = "metal")`, so it changes nothing and only
+implies the flag is required.
+
+Measured on an M4 Pro, macOS 26.5, context 1100, rate from the 900-token run minus
+the 100-token one so model load drops out:
+
+| model | `--gpu-layers 0` | `--gpu-layers 99` | speedup |
+|---|---|---|---|
+| Llama-3.2-1B Q4_K_M | 84 tok/s (RSS 1.78GB) | 222 tok/s (RSS 0.97GB) | 2.6x |
+| Bonsai-4B Q1_0 | 11.2 tok/s (RSS 0.88GB) | 176 tok/s (RSS 0.87GB) | 15.7x |
+
+Bonsai gains far more, and note it is not simply a parameter-count effect: per
+parameter, Q1_0 is about half Q4_K_M's speed on this CPU but faster than it on the
+GPU. The likely cause is that Q1_0 has no hand-tuned NEON path where Q4_K_M does,
+but that is inferred from the ratio rather than measured. Either way, Metal is the
+cheapest way to run memory and framing experiments, which need Bonsai-4B.
+
+CPU time is the clearest evidence the offload is real: Bonsai's 909s of user time
+across 14 cores becomes 0.96s. Offload stays opt-in (`--gpu-layers` defaults to 0),
+so a default macOS run is CPU-only and behaves like the board.
+
+One thing does not carry over from a Linux dev box: `GGML_BLAS` is forced off on
+Apple targets by the sys build script, so CPU-only runs get no Accelerate BLAS for
+prefill.
 
 ### Cross-compile for the Orange Pi (aarch64)
 ```bash

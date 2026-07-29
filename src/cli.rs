@@ -203,9 +203,9 @@ pub struct Args {
     #[arg(long, default_value_t = 4)]
     pub prompt_cache_keep: usize,
 
-    /// Offload this many layers to a GPU. Development aid only: it needs the
-    /// `vulkan` cargo feature, and the Orange Pi has no backend that can use it.
-    /// Use a large number (99) to offload everything.
+    /// Offload this many layers to a GPU. Development aid only; the Orange Pi has
+    /// no backend that can use it. macOS builds already have Metal, elsewhere it
+    /// needs the `vulkan` cargo feature. Use a large number (99) for everything.
     #[arg(long, default_value_t = 0)]
     pub gpu_layers: u32,
 

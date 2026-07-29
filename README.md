@@ -39,6 +39,9 @@ ssh user@<host> 'chmod +x out-of-context && ./out-of-context --threads 4 --promp
 ```
 Building requires `cmake` and a C/C++ toolchain for llama.cpp.
 
+### Developing on macOS
+`cargo build --release` gets Metal without a cargo feature, because llama.cpp enables it for every Apple target. `--gpu-layers 99` then offloads. Measured on an M4 Pro: Llama-3.2-1B Q4_K_M goes from 84 to 222 tok/s, and Bonsai-4B Q1_0 from 11 to 176 tok/s, so a run of 80 lives takes minutes rather than hours. Offload stays opt-in, so a plain run is still CPU-only like the board. On Linux the same flag needs `cargo build --release --features vulkan`.
+
 ## CLI (essentials)
 - `--model <URL|PATH>`: GGUF URL or local file (default Llama-3.2-1B-Instruct Q4_K_M).
 - `--context-size <N>`: context window (default 512). Smaller = shorter, cleaner life; larger = longer run, more tail drift.

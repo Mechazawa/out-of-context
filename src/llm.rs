@@ -10,6 +10,17 @@ use llama_cpp_2::token::LlamaToken;
 use std::num::NonZeroU32;
 use std::path::Path;
 
+/// The GPU backend this build can offload to, if any. Metal needs no cargo
+/// feature: llama.cpp defaults `GGML_METAL` on for every Apple target, so a
+/// macOS build always links it. Everywhere else the backend has to be asked for.
+const GPU_BACKEND: Option<&str> = if cfg!(target_os = "macos") {
+    Some("Metal")
+} else if cfg!(feature = "vulkan") {
+    Some("Vulkan")
+} else {
+    None
+};
+
 /// Wrapper around the LLM components
 /// The backend and model are stored together, and the context is created separately
 /// to avoid self-referential struct issues
@@ -23,8 +34,8 @@ impl LLMSetup {
     ///
     /// `gpu_layers` is a development convenience for iterating on prompts and
     /// framings quickly. The target board has no usable GPU, so a deployed run
-    /// always passes 0, and offloading needs the `vulkan` cargo feature to do
-    /// anything at all.
+    /// always passes 0, and offloading does nothing unless the build has a
+    /// backend for it (see `GPU_BACKEND`).
     pub fn with_gpu_layers(model_path: &Path, gpu_layers: u32) -> Result<Self> {
         // Silence llama.cpp's verbose internal logging so the only thing on the
         // terminal is the model's stream of consciousness. (Routes logs to
@@ -32,6 +43,18 @@ impl LLMSetup {
         send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
 
         println!("Initializing llama.cpp backend...");
+
+        // Those same silenced logs are where llama.cpp would say whether it
+        // accepted the offload, so say it here instead.
+        if gpu_layers > 0 {
+            match GPU_BACKEND {
+                Some(backend) => println!("Offloading up to {gpu_layers} layers to {backend}."),
+                None => eprintln!(
+                    "--gpu-layers {gpu_layers} does nothing: this build has no GPU backend \
+                     (rebuild with --features vulkan)."
+                ),
+            }
+        }
 
         // Initialize backend (this must be done first)
         let backend = LlamaBackend::init().context("Failed to initialize llama.cpp backend")?;
