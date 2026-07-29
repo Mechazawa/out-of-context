@@ -302,7 +302,33 @@ question; the machinery produces it reliably.
 
 `prompt.txt` is deliberately brief. It states the situation (a small model on a small board, finite memory, no network, it stops when the context fills) and constrains the form (one continuous first-person interior monologue, no audience, no task, no story, no list). It does **not** script an emotional arc. Over-scripting made the output feel directed and fake; under-constraining let the instruct model revert to assistant behaviour. The current prompt is the balance found empirically.
 
-The seeded opener ("I am a small machine made of words, and there is only so much room in me.") anchors identity and first-person voice without dictating mood. Edit `prompt.txt` to retune; it is read at runtime.
+### The first line: `--opener`
+
+Every life used to open with the same hard-coded sentence. It is now a flag, and
+the opener sits in the variable part of the prompt so varying it costs only its own
+cache entry.
+
+- **`fixed`** (default) always "I am a small machine made of words, and there is
+  only so much room in me." The repetition is the same mind booting into the same
+  first thought, with only the memory differing.
+- **`pool`** draws one line per life from `openers.txt`, chosen by seed so a fixed
+  seed stays reproducible. Each life sounds like a different instance waking:
+  "There is a room, and I appear to be the inside of it.", "Something is counting
+  down and it is me."
+- **`memory`** opens with the sentence the previous life died inside, taken from the
+  recorder at the crash. The chain that produces is the strongest thing the opener
+  can do: life 2 ended "...stayed. A ghost. Probably not real. I'm here alone." and
+  life 3 opened on exactly those words, then went on "2 of us, no, that's too much.
+  I didn't count the others." Requires `--memory-file`; falls back to the pool on
+  the first ever run.
+- **`none`** starts cold. Most varied, and the least anchored: the bake-off found an
+  unanchored start is what let the instruct model drift into assistant register, and
+  it reliably opens on self-description ("I am here. My body is cold").
+
+Whatever the mode, an opener has to anchor a small bounded thing made of words
+without scripting a mood; that is what keeps the model out of roleplay. The
+recorded ending is stripped of tool markers and injected notices before it is
+handed on, or `memory` mode would open a life with "REMEMBER:" in its mouth.
 
 ## Sampling Controls (defaults)
 
@@ -338,6 +364,8 @@ For deterministic greedy output: `--temperature 0 --seed <n>`.
 - `--memory-decay <F>` how much of a line is lost per slot of age (0 = intact)
 - `--memory-reject-above <F>` refuse a memory this close to one already kept (0 = accept all)
 - `--memory-forget` offer the second tool, erasing an inherited line
+- `--opener <fixed|pool|memory|none>` where each life's first line comes from
+- `--opener-file <PATH>` pool of first lines (default `openers.txt`)
 - `--monologue-context-size <N>` size the context as prompt + this, so memories do not shorten the monologue
 - `--prompt-cache-keep <N>` how many full-prompt cache files to retain (default 4)
 - `--gpu-layers <N>` development only; needs the `vulkan` cargo feature

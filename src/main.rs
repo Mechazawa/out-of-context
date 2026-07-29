@@ -65,6 +65,9 @@ async fn main() -> Result<()> {
         user_prompt: args.user_prompt.clone(),
         prompt_cache: args.prompt_cache.clone(),
         warm_cache: args.warm_cache,
+        opener: args.opener,
+        opener_file: args.opener_file.clone(),
+        seed: args.seed,
         cache_keep: args.prompt_cache_keep.max(1),
         memory: match args.memory_file.clone() {
             Some(path) => Some(MemoryConfig {

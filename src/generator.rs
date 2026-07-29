@@ -8,15 +8,63 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::llm::{LLMSetup, LlamaBatchWrapper};
+use crate::cli::OpenerMode;
 use crate::framing::{DECAY_GAP, Framing};
-use crate::memory::{self, MemoryTail, OVERFLOW_MARK};
+use crate::memory::{self, FORGET_MARKER, MEMORY_MARKER, MemoryTail, OVERFLOW_MARK};
 use crate::output::OutputTarget;
 
-/// A short first-person seed that anchors identity (a small thing made of words,
-/// with little room) so the model stays in genuine introspection instead of
-/// drifting into roleplay or an unrelated character. It deliberately does NOT
-/// script the mood — no calm/dread/resignation arc. The model continues from it.
+/// The built-in first line, used by `--opener fixed` and as the fallback whenever
+/// a pool file is missing or empty.
+///
+/// It anchors identity (a small thing made of words, with little room) so the
+/// model stays in genuine introspection instead of drifting into roleplay or an
+/// unrelated character. It deliberately does NOT script the mood: no
+/// calm/dread/resignation arc. The model continues from it.
 const SEED_OPENER: &str = "I am a small machine made of words, and there is only so much room in me.";
+
+/// Resolves the first line for this life.
+///
+/// The opener sits in the variable part of the prompt, after the memory block, so
+/// varying it per life costs nothing beyond its own cache entry: with
+/// content-addressed caching each distinct opener keeps its own state file and all
+/// of them stay reusable.
+fn resolve_opener(cfg: &GenerationConfig) -> String {
+    match cfg.opener {
+        OpenerMode::None => String::new(),
+        OpenerMode::Fixed => SEED_OPENER.to_string(),
+        OpenerMode::Pool => pick_from_pool(cfg).unwrap_or_else(|| SEED_OPENER.to_string()),
+        OpenerMode::Memory => {
+            // Continue the sentence the previous life died inside. The recorder
+            // took those words at the crash, so the new life picks up mid-thought
+            // where its predecessor was cut off.
+            let carried = cfg
+                .memory
+                .as_ref()
+                .map(|mem| memory::load_last_words(&mem.path))
+                .unwrap_or_default();
+            if carried.is_empty() {
+                pick_from_pool(cfg).unwrap_or_else(|| SEED_OPENER.to_string())
+            } else {
+                carried
+            }
+        }
+    }
+}
+
+/// One line from the pool, chosen by seed so a fixed seed stays reproducible.
+fn pick_from_pool(cfg: &GenerationConfig) -> Option<String> {
+    let text = fs::read_to_string(&cfg.opener_file).ok()?;
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let pick = resolve_seed(cfg.seed) as usize % lines.len();
+    Some(lines[pick].to_string())
+}
 
 #[derive(Clone, Debug)]
 pub struct SamplingConfig {
@@ -47,6 +95,10 @@ pub struct GenerationConfig {
     pub user_prompt: Option<String>,
     pub prompt_cache: Option<PathBuf>,
     pub warm_cache: bool,
+    pub opener: OpenerMode,
+    pub opener_file: PathBuf,
+    /// Sampling seed, reused to choose the opener so a fixed seed is reproducible.
+    pub seed: Option<u32>,
     /// How many full-prompt cache files to retain.
     pub cache_keep: usize,
     pub memory: Option<MemoryConfig>,
@@ -98,6 +150,8 @@ fn overlap(a: &str, b: &str) -> f32 {
 /// `--monologue-context-size` guarantees the monologue a fixed budget no matter
 /// how much the prompt and the memory block have grown.
 pub struct PreparedPrompt {
+    /// This life's first line, empty under `--opener none`.
+    opener: String,
     /// Identical on every run, so it is worth caching once.
     pub stable: Vec<LlamaToken>,
     /// The memory block and opener, which change whenever a memory is written.
@@ -124,20 +178,13 @@ impl PreparedPrompt {
     }
 }
 
-/// What the model writes to use its one tool. A plain text marker rather than a
-/// structured tool call: every token containing `<` is banned to keep markup out
-/// of the monologue, which rules out ChatML tool-call syntax, and small models
-/// emit reliable JSON mid-monologue about as often as they emit none at all.
-const MEMORY_MARKER: &str = "REMEMBER:";
-
 /// How many tokens of the ending are kept for the next life to read.
 const LAST_WORDS_TOKENS: usize = 14;
 
-/// The second tool. It shares the single use with `REMEMBER`, so a life chooses
+/// The second tool shares the single use with `REMEMBER`, so a life chooses
 /// between leaving something and destroying something; it cannot do both. A life
 /// that cannot make sense of what it inherited can erase it instead, and the next
 /// life will never know the line existed.
-const FORGET_MARKER: &str = "FORGET:";
 
 /// Told to the model when its erasure took effect. Naming what is gone costs
 /// context, like everything else here.
@@ -182,9 +229,11 @@ fn forget_memory(
 /// Hands the ending to the next life. Deliberately not conditional on the model
 /// having done anything: the recorder does not ask.
 fn save_last_words(cfg: &GenerationConfig, words: &std::collections::VecDeque<String>) {
-    if let Some(mem) = cfg.memory.as_ref() {
-        memory::save_last_words(&mem.path, &words.iter().cloned().collect::<String>());
-    }
+    let Some(mem) = cfg.memory.as_ref() else {
+        return;
+    };
+    // Cleaning happens in memory::save_last_words, at the source.
+    memory::save_last_words(&mem.path, &words.iter().cloned().collect::<String>());
 }
 
 /// Whether `tail` ends with the marker at the start of a sentence.
@@ -249,6 +298,8 @@ pub fn prepare_prompt(
         None => (String::new(), None, 0),
     };
 
+    let opener = resolve_opener(cfg);
+
     // The memory block goes last, immediately before the opener: a KV cache is
     // only reusable as a prefix, so everything variable has to sit at the end.
     let (stable_prompt, variable_prompt) = build_prompt(
@@ -256,6 +307,7 @@ pub fn prepare_prompt(
         tool_note.as_deref(),
         &user_prompt,
         &memory_block,
+        &opener,
     );
 
     // Tokenized separately so the split is on a token boundary.
@@ -266,6 +318,7 @@ pub fn prepare_prompt(
         user_prompt,
         tool_note,
         memory_block,
+        opener,
         lives,
     })
 }
@@ -334,8 +387,10 @@ pub fn generate_infinite(
     // reveal it as the visible start of the stream for a coherent first line.
     // The trailing space mirrors the prompt and gives the first generated token
     // a clean word boundary to attach to.
-    output.write_token(SEED_OPENER)?;
-    output.write_token(" ")?;
+    if !prepared.opener.is_empty() {
+        output.write_token(&prepared.opener)?;
+        output.write_token(" ")?;
+    }
 
     // Calculate panic threshold (95% of context)
     let panic_threshold = (cfg.context_size as f32 * 0.95) as usize;
@@ -793,6 +848,7 @@ fn build_prompt(
     tool_note: Option<&str>,
     user_prompt: &str,
     memory_block: &str,
+    opener: &str,
 ) -> (String, String) {
     let trimmed = system_prompt.trim_end();
     let user = user_prompt.trim();
@@ -801,11 +857,18 @@ fn build_prompt(
     let stable = format!(
         "<|im_start|>system\n{trimmed}{tool}<|im_end|>\n<|im_start|>user\n{user}"
     );
+    // A trailing space only when there is an opener to attach the first generated
+    // token to; with none the model starts the turn cold.
+    let start = if opener.is_empty() {
+        String::new()
+    } else {
+        format!("{opener} ")
+    };
     let variable = if memory_block.is_empty() {
-        format!("<|im_end|>\n<|im_start|>assistant\n{SEED_OPENER} ")
+        format!("<|im_end|>\n<|im_start|>assistant\n{start}")
     } else {
         format!(
-            "\n\n{}<|im_end|>\n<|im_start|>assistant\n{SEED_OPENER} ",
+            "\n\n{}<|im_end|>\n<|im_start|>assistant\n{start}",
             memory_block.trim_end()
         )
     };

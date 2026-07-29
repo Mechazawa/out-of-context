@@ -194,3 +194,23 @@ fn the_forget_window_survives_many_tombstones() {
     assert_eq!(texts, vec!["line 5", "line 6"]);
     fs::remove_file(&path).ok();
 }
+
+#[test]
+fn last_words_keep_only_the_words() {
+    // A life's ending usually contains the tool call it just made and whatever
+    // notice the program injected. Under --opener memory those would become the
+    // next life's opening line.
+    let path = temp_path("lastwords-clean");
+    save_last_words(&path, "see them. REMEMBER: I am first. [MEMORY FULL - x] before them.");
+    let got = load_last_words(&path);
+    assert!(!got.contains("REMEMBER"), "got {got:?}");
+    assert!(!got.contains('['), "got {got:?}");
+    assert!(got.contains("see them."));
+    assert!(got.contains("before them."));
+    let mut sidecar = path.clone();
+    sidecar.set_file_name(format!(
+        "{}.lastwords",
+        path.file_name().unwrap().to_string_lossy()
+    ));
+    fs::remove_file(sidecar).ok();
+}

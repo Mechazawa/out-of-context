@@ -24,6 +24,15 @@ pub const OVERFLOW_MARK: &str = " - ERR MEMORY OVERFLOW";
 /// Status marking a line that erases an earlier one rather than adding a memory.
 const FORGET_STATUS: &str = "forget";
 
+/// What the model writes to use its one tool. A plain text marker rather than a
+/// structured tool call: every token containing `<` is banned to keep markup out
+/// of the monologue, which rules out ChatML tool-call syntax, and small models
+/// emit reliable JSON mid-monologue about as often as they emit none at all.
+pub const MEMORY_MARKER: &str = "REMEMBER:";
+
+/// The second tool, offered only with `--memory-forget`.
+pub const FORGET_MARKER: &str = "FORGET:";
+
 /// How much of the tail to read per step when walking backwards.
 const TAIL_CHUNK: usize = 8 * 1024;
 
@@ -317,10 +326,25 @@ pub fn save_last_words(log: &Path, words: &str) {
     if trimmed.is_empty() {
         return;
     }
-    let cleaned: String = trimmed
+    // An ending usually contains the tool call the life had just made and
+    // whatever notice the program injected in response. Those are machinery, not
+    // last words, and under `--opener memory` they would be handed to the next
+    // life as its opening line.
+    let mut cleaned: String = trimmed
+        .replace(MEMORY_MARKER, " ")
+        .replace(FORGET_MARKER, " ")
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
+    while let Some(open) = cleaned.find('[') {
+        match cleaned[open..].find(']') {
+            Some(close) => cleaned.replace_range(open..open + close + 1, " "),
+            None => {
+                cleaned.truncate(open);
+                break;
+            }
+        }
+    }
     let _ = fs::write(
         last_words_path(log),
         cleaned.split_whitespace().collect::<Vec<_>>().join(" "),

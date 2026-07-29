@@ -1,5 +1,22 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
+
+/// Where each life's first line comes from.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum OpenerMode {
+    /// The same line every life. The repetition is the same mind booting into the
+    /// same first thought, with only the memory differing.
+    Fixed,
+    /// One line drawn from --opener-file per life, so each life sounds like a
+    /// different instance waking.
+    Pool,
+    /// Continue the sentence the previous life died inside. Needs --memory-file,
+    /// and falls back to the first pool line on the first ever run.
+    Memory,
+    /// No opener. The model starts cold from the prompt, which is the most varied
+    /// and the most likely to drift out of the monologue.
+    None,
+}
 
 /// Out of Context - An LLM text generator that runs until context exhaustion
 #[derive(Parser, Debug)]
@@ -107,6 +124,14 @@ pub struct Args {
     /// Random seed for sampling (omit to use a time-based seed)
     #[arg(long)]
     pub seed: Option<u32>,
+
+    /// Where each life's first line comes from.
+    #[arg(long, value_enum, default_value_t = OpenerMode::Fixed)]
+    pub opener: OpenerMode,
+
+    /// Pool of first lines for --opener pool, one per line.
+    #[arg(long, default_value = "openers.txt")]
+    pub opener_file: PathBuf,
 
     /// Override the user prompt that follows the system prompt (advanced)
     #[arg(long)]
