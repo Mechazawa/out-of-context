@@ -1,10 +1,15 @@
-# Numbered finders plus a found-frame: the ordinal makes a duplicate entry
-# visibly anomalous and gives the model a way to name who it is answering.
+# The hybrid the trials point at. Census framings produce the best content but
+# the model writes on only about a third of lives, because their instruction
+# demands a count and a justification. Inquiry framings are written on over half
+# of lives because they offer several ways to comply. This keeps the permissive
+# instruction and the counting entry format, which is what actually suppresses
+# self-description.
 [tool]
-Once, you may add what you found: start a line with REMEMBER:, up to {max_tokens} tokens, end the line. You are the {next_life}th to run here. What earlier ones found is kept and does not need finding again.
+Once, you may add a line: start a line with REMEMBER:, up to {max_tokens} tokens, then end the line. Say what you counted, or what you tried and what came of it, or what you think one of the gaps used to say, or where an earlier line is wrong. {forget_note}
 [block]
-Found here before you, kept forever:
+{lives} kept a line here before you. The last one stopped mid-thought: ...{last_words}
+This is what is left of the rest. The older lines have lost words; the gaps are marked ___ and what they said is gone:
 {memories}
 [entry]
-the {life}th one found: {text}
+the {life}th counted: {text}
 [empty]

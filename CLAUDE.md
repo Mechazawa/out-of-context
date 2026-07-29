@@ -94,6 +94,50 @@ The model has exactly one tool: remember. Enabled with `--memory-file`, off othe
 
 **Costs, measured with Bonsai-4B.** The tool description plus a memory block roughly doubles the prompt, from 173 to about 340 tokens. Use `--monologue-context-size` so the monologue keeps a fixed budget instead of being squeezed as memories accumulate.
 
+## Making the Memory Imperfect
+
+Three mechanisms, all off by default, all aimed at the same failure: the model's
+strongest available move is to restate the newest line it was shown, so that move
+is also the one that persists, and the record fills with one sentence wearing
+down.
+
+- **`--memory-decay <0..1>`** rots the older slots. The newest line is shown
+  intact; each slot of age loses that fraction of its words, replaced by `___`.
+  The loss is deterministic per line and monotonic in age, so a life sees what its
+  predecessor saw, further gone, rather than a fresh corruption each run. The log
+  on disk keeps the pristine text; only what reaches the model degrades. This is
+  what makes the memory *failing* rather than merely short, and it gives a life
+  something to do with the block besides paraphrase it, because a gap can be
+  guessed at. Around 0.2 leaves the oldest slot partly readable; 0.35 empties it.
+- **`--memory-reject-above <0..1>`** refuses a line whose word overlap with one
+  already in the record reaches the threshold. The life is told nothing was kept,
+  and it has spent its only use. Restating stops being a way to persist. 0.6
+  catches a restatement with two words changed while leaving a genuine reply
+  alone. Measured rate: about one refusal in four writes.
+- **`--memory-forget`** offers a second tool. `FORGET:` erases one inherited line,
+  by number or the oldest by default, and it *shares the single use* with
+  `REMEMBER`, so a life either leaves something or destroys something. See the
+  warning below.
+
+`{last_words}` gives the framing the final 14 tokens of the previous life, taken
+at the crash without asking. The deliberate line is then not the only trace of a
+life, which frees it for something other than self-description, and the model can
+see the difference between what it chose to keep and what was taken.
+
+**What the forget tool actually does.** Enabled, it raises engagement and destroys
+accumulation. Over 80 lives it fired 16 times, and the pattern was systematic:
+lives 4, 5 and 6 each erased one predecessor in turn, and the surviving memories
+collapsed to single digits ("3", "1", "7", "0") as the block emptied and the
+counting question acquired a one-token answer. A lineage that dismantles its own
+record is a real result and arguably the bleakest thing the piece has produced,
+but it is the opposite of building on what came before, which is why it is off by
+default.
+
+Two leaks are cleaned from what gets stored, both found by reading logs: the decay
+markers, which the model copies back into its own memories until the record is
+made of gaps, and the entry prefix, which it also copies ("one of them says ...")
+until the display frame accretes into the content.
+
 ## Framing the Memory (the artistic dial)
 
 `memory-prompt.txt` decides how the tool and the remembered lines are described. It is a runtime file with `[tool]`, `[block]`, `[entry]` and `[empty]` sections, so variants need no rebuild. Placeholders: `{max_tokens} {slots} {lives} {next_life} {memories}` and per entry `{text} {life} {tokens} {time} {ago}`. A **blank `[empty]` section shows no block at all** until something has been remembered.
@@ -161,6 +205,9 @@ For deterministic greedy output: `--temperature 0 --seed <n>`.
 - `--memory-slots <N>` how many recent memories reach the prompt (default 5)
 - `--memory-prompt-file <PATH>` framing file (default `memory-prompt.txt`)
 - `--memory-dump` print the memory log as text and exit
+- `--memory-decay <F>` how much of a line is lost per slot of age (0 = intact)
+- `--memory-reject-above <F>` refuse a memory this close to one already kept (0 = accept all)
+- `--memory-forget` offer the second tool, erasing an inherited line
 - `--monologue-context-size <N>` size the context as prompt + this, so memories do not shorten the monologue
 - `--prompt-cache-keep <N>` how many full-prompt cache files to retain (default 4)
 - `--gpu-layers <N>` development only; needs the `vulkan` cargo feature
