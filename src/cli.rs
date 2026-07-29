@@ -24,13 +24,14 @@ pub enum OpenerMode {
 pub struct Args {
     /// Hugging Face model URL or path to local GGUF model file.
     ///
-    /// Examples:
-    ///   - "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q4_K_M.gguf"
+    /// Defaults to Bonsai-4B Q1_0, which has the best interior voice of anything
+    /// tested and is the only model whose memory tool works. Examples:
+    ///   - "https://huggingface.co/prism-ml/Bonsai-1.7B-gguf/resolve/main/Bonsai-1.7B-Q1_0.gguf"
     ///   - "./my-model.gguf"
     #[arg(
         short,
         long,
-        default_value = "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf"
+        default_value = "https://huggingface.co/prism-ml/Bonsai-4B-gguf/resolve/main/Bonsai-4B-Q1_0.gguf"
     )]
     pub model: String,
 

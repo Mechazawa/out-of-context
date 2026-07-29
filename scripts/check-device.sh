@@ -8,7 +8,7 @@
 set -u
 
 BIN="${1:-./out-of-context}"
-MODEL="${2:-models/Llama-3.2-1B-Instruct-Q4_K_M.gguf}"
+MODEL="${2:-models/Bonsai-4B-Q1_0.gguf}"
 THREADS="${THREADS:-4}"
 
 if [ ! -x "$BIN" ]; then echo "binary not found/executable: $BIN" >&2; exit 1; fi

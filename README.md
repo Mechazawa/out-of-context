@@ -3,7 +3,7 @@
 An LLM art piece that runs on a small single-board computer, speaks a continuous first-person stream of consciousness one word at a time, and intentionally panics when its context window fills. No filtering, no network. The crash is the artwork: a bounded mind narrating its way to overflow.
 
 ## What It Does
-- Auto-downloads a GGUF model (default Llama-3.2-1B-Instruct Q4_K_M) and memory-maps it.
+- Auto-downloads a GGUF model (default Bonsai-4B Q1_0, ~572MB) and memory-maps it.
 - Wraps a brief, deliberately under-directed prompt around a seeded first-person opener, so the voice is genuine rather than scripted.
 - Reveals text at a steady reading pace (default 1.5 words/second) and word-wraps to the terminal.
 - Suppresses the model's assistant reflexes with a DRY sampler, targeted logit bans (control tokens, markup), and a short context that ends the run before small models drift.
@@ -43,7 +43,7 @@ Building requires `cmake` and a C/C++ toolchain for llama.cpp.
 `cargo build --release` gets Metal without a cargo feature, because llama.cpp enables it for every Apple target. `--gpu-layers 99` then offloads. Measured on an M4 Pro: Llama-3.2-1B Q4_K_M goes from 84 to 222 tok/s, and Bonsai-4B Q1_0 from 11 to 176 tok/s, so a run of 80 lives takes minutes rather than hours. Offload stays opt-in, so a plain run is still CPU-only like the board. On Linux the same flag needs `cargo build --release --features vulkan`.
 
 ## CLI (essentials)
-- `--model <URL|PATH>`: GGUF URL or local file (default Llama-3.2-1B-Instruct Q4_K_M).
+- `--model <URL|PATH>`: GGUF URL or local file (default Bonsai-4B Q1_0).
 - `--context-size <N>`: context window (default 512). Smaller = shorter, cleaner life; larger = longer run, more tail drift.
 - `--words-per-second <F>`: display pace (default 1.5; 0 = as fast as the model runs).
 - `--threads <N>`: use 4 on the Orange Pi.

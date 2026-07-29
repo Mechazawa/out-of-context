@@ -16,8 +16,9 @@ The name "Out of Context" reflects the constraint: an LLM confined to a fixed co
 The project began targeting a Raspberry Pi Zero 2 W (512MB). It now targets the Orange Pi 2W (1.5GB), which is why the default model is larger than a 512MB budget would allow. The code is hardware-agnostic; only the default model and the prompt's self-description assume this board.
 
 ### Model
-- **Default**: Llama-3.2-1B-Instruct, Q4_K_M GGUF (~770MB file)
-- **Source**: `bartowski/Llama-3.2-1B-Instruct-GGUF`
+- **Default**: Bonsai-4B, Q1_0 GGUF (~572MB file)
+- **Source**: `prism-ml/Bonsai-4B-gguf`
+- **Previous default**: Llama-3.2-1B-Instruct Q4_K_M (`bartowski/Llama-3.2-1B-Instruct-GGUF`, ~770MB), still the choice if speed matters more than memory
 - **Why this model**: a head-to-head bake-off (see "Model Selection" below) showed it produces the most genuine, sustained first-person interior monologue of the candidates that fit the device. Qwen2.5-1.5B is higher quality per sentence but collapses into chatbot mode ("What do you think?", "Goodbye") on almost every run, and at ~1.65GB it does not fit. Qwen2.5-0.5B and SmolLM2-360M collapse into assistant boilerplate ("How can I assist you today?").
 
 ### Measured on the real board (2026-07-28)
@@ -342,7 +343,7 @@ For deterministic greedy output: `--temperature 0 --seed <n>`.
 
 ## CLI Arguments
 
-- `--model <URL|PATH>` model GGUF URL or local file (default Llama-3.2-1B-Instruct Q4_K_M)
+- `--model <URL|PATH>` model GGUF URL or local file (default Bonsai-4B Q1_0)
 - `--model-dir <DIR>` where downloads are cached (default `models`)
 - `--prompt-file <PATH>` system prompt file (default `prompt.txt`)
 - `--context-size <N>` context window (default 512)
@@ -446,7 +447,7 @@ ssh orangepi@<host> 'chmod +x out-of-context && ./out-of-context --threads 4'
 
 ## Fallback Models
 
-If Llama-3.2-1B is too slow or too large on the real board, switch with `--model`. Faster and lighter, lower quality, in descending order of size:
+If Bonsai-4B is too slow on the real board, switch with `--model`. Faster and lighter, in descending order of size. Note that none of these can use the memory tool:
 ```bash
 # SmolLM2-360M (~270MB, fast, drifts more)
 ./out-of-context --model "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q4_K_M.gguf"
