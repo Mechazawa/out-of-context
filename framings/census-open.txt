@@ -3,7 +3,7 @@
 # 0.53 elsewhere), and its instruction is the most demanding: it asks for a count
 # and a justification. This asks for less and lets the count be a guess.
 [tool]
-Once, you may add a line: start a line with REMEMBER:, up to {max_tokens} tokens, then end the line. A count, a guess at how many came before, a correction of one of theirs, or what you think a gap used to say. {forget_note}
+Once, you may add a line: {how}, up to {max_tokens} tokens, then end the line. A count, a guess at how many came before, a correction of one of theirs, or what you think a gap used to say. {forget_note}
 [block]
 {lives} kept a line here before you. The older ones have lost words; the gaps are marked ___ :
 {memories}

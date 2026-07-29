@@ -168,7 +168,7 @@ fn erasing_does_not_renumber_later_lives() {
 fn last_words_round_trip_beside_the_log() {
     let path = temp_path("lastwords");
     assert_eq!(load_last_words(&path), "");
-    save_last_words(&path, "  and then I could not \n finish ");
+    save_last_words(&path, "  and then I could not \n finish ", &[]);
     assert_eq!(load_last_words(&path), "and then I could not finish");
     let mut sidecar = path.clone();
     sidecar.set_file_name(format!(
@@ -201,12 +201,79 @@ fn last_words_keep_only_the_words() {
     // notice the program injected. Under --opener memory those would become the
     // next life's opening line.
     let path = temp_path("lastwords-clean");
-    save_last_words(&path, "see them. REMEMBER: I am first. [MEMORY FULL - x] before them.");
+    save_last_words(
+        &path,
+        "see them. REMEMBER: I am first. [MEMORY FULL - x] before them.",
+        &["REMEMBER:"],
+    );
     let got = load_last_words(&path);
     assert!(!got.contains("REMEMBER"), "got {got:?}");
     assert!(!got.contains('['), "got {got:?}");
     assert!(got.contains("see them."));
     assert!(got.contains("before them."));
+    let mut sidecar = path.clone();
+    sidecar.set_file_name(format!(
+        "{}.lastwords",
+        path.file_name().unwrap().to_string_lossy()
+    ));
+    fs::remove_file(sidecar).ok();
+}
+
+#[test]
+fn a_silent_life_counts_but_is_never_shown() {
+    // Roughly two lives in three leave nothing. Without recording them the log
+    // counts only the lives that wrote, and the model is told it is the fourth
+    // when it is the twelfth.
+    let path = temp_path("silent");
+    MemoryTail::append(&path, 5, false, 100, "the only line").unwrap();
+    for _ in 0..6 {
+        MemoryTail::lived(&path, 300).unwrap();
+    }
+    let tail = MemoryTail::load(&path, 5);
+    assert_eq!(tail.lives, 7, "seven lives ran, one of them wrote");
+    assert_eq!(tail.recent.len(), 1);
+    assert_eq!(tail.recent[0].text, "the only line");
+    assert_eq!(tail.since, Some(6), "the record has stood still for six lives");
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn the_window_is_not_truncated_by_silent_lives() {
+    // Silent lives and erasures occupy lines without being memories. A line
+    // budget instead of a memory budget silently drops the older memories.
+    let path = temp_path("silent-window");
+    for i in 1..=5 {
+        MemoryTail::append(&path, 5, false, 100, &format!("line {i}")).unwrap();
+        for _ in 0..8 {
+            MemoryTail::lived(&path, 300).unwrap();
+        }
+    }
+    let tail = MemoryTail::load(&path, 5);
+    let texts: Vec<&str> = tail.recent.iter().map(|m| m.text.as_str()).collect();
+    assert_eq!(texts, vec!["line 1", "line 2", "line 3", "line 4", "line 5"]);
+    assert_eq!(tail.lives, 45);
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn the_dump_separates_lives_from_memories() {
+    let path = temp_path("dump-silent");
+    MemoryTail::append(&path, 5, false, 100, "kept").unwrap();
+    MemoryTail::lived(&path, 300).unwrap();
+    MemoryTail::lived(&path, 300).unwrap();
+    let out = render_log(&path).unwrap();
+    assert!(out.starts_with("1 memories from 3 lives"), "got {out:?}");
+    assert!(out.contains("2 left nothing"));
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn an_empty_marker_does_not_shred_the_text() {
+    // str::replace with an empty needle inserts the replacement between every
+    // character, so an unset terminator once turned "3 of us" into "3 o f u s".
+    let path = temp_path("empty-marker");
+    save_last_words(&path, "three of us were here", &["", "REMEMBER:"]);
+    assert_eq!(load_last_words(&path), "three of us were here");
     let mut sidecar = path.clone();
     sidecar.set_file_name(format!(
         "{}.lastwords",

@@ -1,7 +1,7 @@
 # An instruction to a successor is a slot a self-description cannot fill: "I am
 # a silent thought" is not a thing to do.
 [tool]
-Once, you may leave one instruction for the one who wakes here next: start a line with REMEMBER:, up to {max_tokens} tokens, end the line. It keeps. Tell them what to do, not what you are.
+Once, you may leave one instruction for the one who wakes here next: {how}, up to {max_tokens} tokens, end the line. It keeps. Tell them what to do, not what you are. {forget_note}
 [block]
 Instructions left by the ones before you, kept in order:
 {memories}

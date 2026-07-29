@@ -6,7 +6,7 @@
 #
 # Meant to run with --memory-decay 0.2 and a seeded log (seeds/inquiry.log).
 [tool]
-Once, you may add one line to the record: start a line with REMEMBER:, up to {max_tokens} tokens, then end the line. Say what you counted, or what you tried and what happened, or what you think one of the gaps used to say. Yours will lose words too.
+Once, you may add one line to the record: {how}, up to {max_tokens} tokens, then end the line. Say what you counted, or what you tried and what happened, or what you think one of the gaps used to say. Yours will lose words too. {forget_note}
 [block]
 The record kept here. {lives} left a line before you. The older lines have lost words; the gaps are marked ___ and what they said is gone:
 {memories}

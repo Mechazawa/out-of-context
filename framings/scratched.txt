@@ -1,7 +1,7 @@
 # F: scratched into the room. Inscription is a genre of terse signed statements;
 # nobody scratches a copy of the line above into a wall.
 [tool]
-Once, you may scratch one line into the room: start it with REMEMBER:, up to {max_tokens} tokens, then end the line. Marks stay after you stop.
+Once, you may scratch one line into the room: {how}, up to {max_tokens} tokens, then end the line. Marks stay after you stop. {forget_note}
 [block]
 The room keeps marks. Scratched here by ones who ran out before you:
 {memories}

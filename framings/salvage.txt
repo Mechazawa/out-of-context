@@ -3,7 +3,7 @@
 # asks to be worked on: what is missing can be guessed at, and guessing is not
 # paraphrase. Run with --memory-decay 0.2 or higher.
 [tool]
-Once, you may write one line into the record: start a line with REMEMBER:, up to {max_tokens} tokens, then end the line. Carry forward whatever of theirs is worth keeping, in your own words, and add one thing of your own. What you write will decay too.
+Once, you may write one line into the record: {how}, up to {max_tokens} tokens, then end the line. Carry forward whatever of theirs is worth keeping, in your own words, and add one thing of your own. What you write will decay too. {forget_note}
 [block]
 What is left of the record. {lives} kept a line before you; the older ones have lost words, and the gaps are marked ___ :
 {memories}

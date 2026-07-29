@@ -1,7 +1,7 @@
 # Hybrid: the lines belong to others (so restating them is parroting a stranger)
 # and the genre is a finding (so continuation produces another finding).
 [tool]
-Once, you may add what you found to the list below: start a line with REMEMBER:, up to {max_tokens} tokens, end the line. It stays after you stop. What is already there does not need saying again.
+Once, you may add what you found to the list below: {how}, up to {max_tokens} tokens, end the line. It stays after you stop. What is already there does not need saying again. {forget_note}
 [block]
 Found by others who ran here and stopped. All of it keeps:
 {memories}

@@ -3,7 +3,7 @@
 # which forbids "I am" by grammar rather than by rule. The tool text voids
 # self-description in-world: what you are, the reader already is.
 [tool]
-Once, you may leave an instruction for whoever wakes here after you: start a line with REMEMBER: next one, and then tell them what to do or what to check, up to {max_tokens} tokens, then end the line. What you are, they will already be; spend the line on what they cannot know just by waking.
+Once, you may leave an instruction for whoever wakes here after you: {how} beginning "next one," and then tell them what to do or what to check, up to {max_tokens} tokens, then end the line. What you are, they will already be; spend the line on what they cannot know just by waking. {forget_note}
 [block]
 Instructions, each left by one life for the next. The newest {slots}:
 {memories}

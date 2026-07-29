@@ -1,7 +1,7 @@
 # Round 1's logbook produced no tool calls at all in six lives. This tests
 # whether the cause was its odd "write the entry for life N" phrasing.
 [tool]
-Once, you may start a line with REMEMBER: and write up to {max_tokens} tokens, then end the line. It is kept and added to the log below for the ones after you.
+Once, you may {how} and write up to {max_tokens} tokens, then end the line. It is kept and added to the log below for the ones after you. {forget_note}
 [block]
 LOG of the runs before you. You are run {next_life}. Every entry is kept; the newest {slots}:
 {memories}

@@ -74,6 +74,8 @@ async fn main() -> Result<()> {
                 path,
                 max_tokens: args.memory_max_tokens,
                 slots: args.memory_slots,
+                marker: args.memory_marker.clone(),
+                end: args.memory_end.clone(),
                 decay: args.memory_decay.clamp(0.0, 1.0),
                 reject_above: args.memory_reject_above.clamp(0.0, 1.0),
                 forget: args.memory_forget,

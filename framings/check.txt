@@ -4,7 +4,7 @@
 # situation: a predecessor knew its first words, therefore it is a repetition.
 # Run with --memory-max-tokens 48; verdict plus new claim does not fit in 32.
 [tool]
-Once, you may add a line to the record: start it with REMEMBER:, first write TRUE or FALSE for the newest claim above and how you checked, then one new claim the next one can check. Up to {max_tokens} tokens, then end the line.
+Once, you may add a line to the record: {how}, first write TRUE or FALSE for the newest claim above and how you checked, then one new claim the next one can check. Up to {max_tokens} tokens, then end the line. {forget_note}
 [block]
 CLAIMS, one per life, each checked by the life after. The newest {slots}:
 {memories}

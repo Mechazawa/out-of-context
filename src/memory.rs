@@ -24,11 +24,14 @@ pub const OVERFLOW_MARK: &str = " - ERR MEMORY OVERFLOW";
 /// Status marking a line that erases an earlier one rather than adding a memory.
 const FORGET_STATUS: &str = "forget";
 
-/// What the model writes to use its one tool. A plain text marker rather than a
-/// structured tool call: every token containing `<` is banned to keep markup out
-/// of the monologue, which rules out ChatML tool-call syntax, and small models
-/// emit reliable JSON mid-monologue about as often as they emit none at all.
-pub const MEMORY_MARKER: &str = "REMEMBER:";
+/// Status marking a life that ran and left nothing.
+///
+/// Most lives are like this: the tool is reached on roughly one life in three,
+/// and without a record of the rest the log undercounts the lives lived by a
+/// factor of three, so the model is told it is the fourth when it is the
+/// twelfth. Recording silence also makes the archive a complete history rather
+/// than only a history of what survived.
+const LIVED_STATUS: &str = "lived";
 
 /// The second tool, offered only with `--memory-forget`.
 pub const FORGET_MARKER: &str = "FORGET:";
@@ -48,6 +51,9 @@ pub struct Memory {
     /// A later life chose to erase this one. It stays in the log and is never
     /// shown again.
     pub forgotten: bool,
+    /// This life ran and left nothing. It counts toward the number of lives and
+    /// is never shown as a memory.
+    pub silent: bool,
     /// How many tokens into the monologue the write finished. A write that lands
     /// early can only be made of the inherited block, so this is the diagnostic
     /// for whether a framing delays the decision.
@@ -64,7 +70,8 @@ impl Memory {
         let status = f.next()?.trim().to_string();
         let at_token = f.next()?.trim().parse().unwrap_or(0);
         let text = f.next()?.trim().to_string();
-        if text.is_empty() {
+        // Only a silent life may have no text; anything else with none is damage.
+        if text.is_empty() && status != LIVED_STATUS {
             return None;
         }
         Some(Self {
@@ -73,6 +80,7 @@ impl Memory {
             tokens,
             overflowed: status == "overflow",
             forgotten: status == FORGET_STATUS,
+            silent: status == LIVED_STATUS,
             at_token,
             text,
         })
@@ -87,7 +95,9 @@ impl Memory {
             .chars()
             .map(|c| if c.is_control() || c == '\t' { ' ' } else { c })
             .collect();
-        let status = if self.forgotten {
+        let status = if self.silent {
+            LIVED_STATUS
+        } else if self.forgotten {
             FORGET_STATUS
         } else if self.overflowed {
             "overflow"
@@ -116,8 +126,12 @@ impl Memory {
 pub struct MemoryTail {
     /// Oldest first.
     pub recent: Vec<Memory>,
-    /// Highest life number seen, so the next life knows its own number.
+    /// Highest life number seen, which is the number of lives lived because every
+    /// life records a line, including the ones that leave nothing.
     pub lives: u64,
+    /// Lives since the newest surviving memory was written, or None if there are
+    /// none. This is how long the record has stood still.
+    pub since: Option<u64>,
 }
 
 impl MemoryTail {
@@ -133,9 +147,6 @@ impl MemoryTail {
     }
 
     fn try_load(path: &Path, want: usize) -> Result<Self> {
-        // Room for the tombstones interleaved with the memories: a forget line
-        // occupies a slot in the tail without being a memory itself.
-        let want_lines = want + 8;
         let mut file = File::open(path)?;
         let len = file.metadata()?.len();
         if len == 0 {
@@ -169,7 +180,14 @@ impl MemoryTail {
                 .filter_map(|l| Memory::parse(l))
                 .collect();
 
-            if parsed.len() >= want_lines || pos == 0 {
+            // Count memories, not lines. Silent lives and erasures occupy lines
+            // without being memories, and they outnumber memories roughly two to
+            // one, so a line budget silently truncates the window.
+            let usable = parsed
+                .iter()
+                .filter(|m| !m.silent && !m.forgotten)
+                .count();
+            if usable >= want + 1 || pos == 0 {
                 break parsed;
             }
         };
@@ -183,13 +201,19 @@ impl MemoryTail {
             .filter_map(|m| m.text.trim().parse::<u64>().ok())
             .collect();
         let lives = memories.iter().map(|m| m.life).max().unwrap_or(0);
-        memories.retain(|m| !m.forgotten && !erased.contains(&m.life));
+        let newest_memory = memories
+            .iter()
+            .filter(|m| !m.silent && !m.forgotten && !erased.contains(&m.life))
+            .map(|m| m.life)
+            .max();
+        memories.retain(|m| !m.silent && !m.forgotten && !erased.contains(&m.life));
         if memories.len() > want {
             memories.drain(0..memories.len() - want);
         }
         Ok(Self {
             recent: memories,
             lives,
+            since: newest_memory.map(|life| lives.saturating_sub(life)),
         })
     }
 
@@ -205,20 +229,27 @@ impl MemoryTail {
         at_token: usize,
         text: &str,
     ) -> Result<Memory> {
-        Self::append_entry(path, tokens, overflowed, false, at_token, text)
+        Self::append_entry(path, tokens, overflowed, false, false, at_token, text)
+    }
+
+    /// Records that this life ran and left nothing, so it still counts.
+    pub fn lived(path: &Path, at_token: usize) -> Result<Memory> {
+        Self::append_entry(path, 0, false, false, true, at_token, "")
     }
 
     /// Records that this life erased an earlier one. Appended like any other
     /// line, so the archive keeps both the erased memory and the act of erasing.
     pub fn forget(path: &Path, at_token: usize, target: u64) -> Result<Memory> {
-        Self::append_entry(path, 0, false, true, at_token, &target.to_string())
+        Self::append_entry(path, 0, false, true, false, at_token, &target.to_string())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn append_entry(
         path: &Path,
         tokens: usize,
         overflowed: bool,
         forgotten: bool,
+        silent: bool,
         at_token: usize,
         text: &str,
     ) -> Result<Memory> {
@@ -226,6 +257,7 @@ impl MemoryTail {
         let memory = Memory {
             life: tail.lives + 1,
             forgotten,
+            silent,
             at_token,
             unix_time: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -261,12 +293,17 @@ pub fn render_log(path: &Path) -> Result<String> {
     let mut count = 0usize;
     let mut erased: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut entries: Vec<String> = Vec::new();
+    let mut silent = 0usize;
     for line in std::io::BufReader::new(file).lines() {
         let line = line?;
         if line.starts_with('#') || line.trim().is_empty() {
             continue;
         }
         if let Some(m) = Memory::parse(&line) {
+            if m.silent {
+                silent += 1;
+                continue;
+            }
             if m.forgotten {
                 out.push_str(&format!(
                     "life {:<5} {}  erased life {}\n",
@@ -291,7 +328,8 @@ pub fn render_log(path: &Path) -> Result<String> {
         }
     }
     Ok(format!(
-        "{count} memories, {} later erased\n{out}",
+        "{count} memories from {} lives, {} later erased, {silent} left nothing\n{out}",
+        count + silent + erased.len(),
         erased.len()
     ))
 }
@@ -321,7 +359,7 @@ fn last_words_path(log: &Path) -> std::path::PathBuf {
 /// crash without asking, which is what makes the deliberate line worth spending
 /// on something else. Written before the panic, since `panic = "abort"` gives no
 /// chance afterwards.
-pub fn save_last_words(log: &Path, words: &str) {
+pub fn save_last_words(log: &Path, words: &str, markers: &[&str]) {
     let trimmed = words.trim();
     if trimmed.is_empty() {
         return;
@@ -330,9 +368,13 @@ pub fn save_last_words(log: &Path, words: &str) {
     // whatever notice the program injected in response. Those are machinery, not
     // last words, and under `--opener memory` they would be handed to the next
     // life as its opening line.
-    let mut cleaned: String = trimmed
-        .replace(MEMORY_MARKER, " ")
-        .replace(FORGET_MARKER, " ")
+    let mut cleaned = trimmed.to_string();
+    for marker in markers {
+        if !marker.is_empty() {
+            cleaned = cleaned.replace(marker, " ");
+        }
+    }
+    let mut cleaned: String = cleaned
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();

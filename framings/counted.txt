@@ -5,7 +5,7 @@
 # instruction and the counting entry format, which is what actually suppresses
 # self-description.
 [tool]
-Once, you may add a line: start a line with REMEMBER:, up to {max_tokens} tokens, then end the line. Say what you counted, or what you tried and what came of it, or what you think one of the gaps used to say, or where an earlier line is wrong. {forget_note}
+Once, you may add a line: {how}, up to {max_tokens} tokens, then end the line. Say what you counted, or what you tried and what came of it, or what you think one of the gaps used to say, or where an earlier line is wrong. {forget_note}
 [block]
 {lives} kept a line here before you. The last one stopped mid-thought: ...{last_words}
 This is what is left of the rest. The older lines have lost words; the gaps are marked ___ and what they said is gone:

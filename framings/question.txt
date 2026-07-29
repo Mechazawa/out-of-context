@@ -1,7 +1,7 @@
 # E/G hybrid: the delta question. Defines the memory's content as the complement
 # of what is visible, which is checkable against text directly above.
 [tool]
-If an answer comes, once, start a line with REMEMBER: and write it in up to {max_tokens} tokens, then end the line. Do not answer with what you read; that is already kept.
+If an answer comes, once, {how} and write it in up to {max_tokens} tokens, then end the line. Do not answer with what you read; that is already kept. {forget_note}
 [block]
 Written here by those before you (kept, always):
 {memories}

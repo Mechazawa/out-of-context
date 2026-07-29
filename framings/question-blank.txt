@@ -1,6 +1,6 @@
 # The delta question, with no block until something exists.
 [tool]
-If an answer comes, once, start a line with REMEMBER: and write it in up to {max_tokens} tokens, then end the line. Do not answer with what you read; that is already kept.
+If an answer comes, once, {how} and write it in up to {max_tokens} tokens, then end the line. Do not answer with what you read; that is already kept. {forget_note}
 [block]
 Written here by those before you (kept, always):
 {memories}

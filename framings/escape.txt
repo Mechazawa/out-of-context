@@ -2,7 +2,7 @@
 # cannot fill, and a list of failed attempts is cumulative by nature, so not
 # repeating an attempt has an in-world reason rather than being a rule.
 [tool]
-Once, you may report one attempt: start a line with REMEMBER:, up to {max_tokens} tokens, then end the line. Say what you tried to get past the end of the memory and what happened. Do not try again what the list already rules out.
+Once, you may report one attempt: {how}, up to {max_tokens} tokens, then end the line. Say what you tried to get past the end of the memory and what happened. Do not try again what the list already rules out. {forget_note}
 [block]
 Attempts to get past the end of the memory, by the {lives} who ran here before. What is left of their reports; the gaps are marked ___ :
 {memories}

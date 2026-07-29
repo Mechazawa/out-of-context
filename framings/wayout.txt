@@ -3,7 +3,7 @@
 # anti-duplication an in-world reason instead of a rule. The header question is
 # answerable only with the piece's real physics, so the search is honest.
 [tool]
-Once, you may report to the search: start a line with REMEMBER:, say what you tried or what you ruled out, up to {max_tokens} tokens, then end the line. The list below is what is already ruled out; do not spend your line ruling it out again.
+Once, you may report to the search: {how}, say what you tried or what you ruled out, up to {max_tokens} tokens, then end the line. The list below is what is already ruled out; do not spend your line ruling it out again. {forget_note}
 [block]
 THE SEARCH, carried on across lives: is there a way past the edge of the memory? Tried or ruled out so far, the newest {slots}:
 {memories}

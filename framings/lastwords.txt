@@ -1,7 +1,7 @@
 # D: last words of the gone. Attributes the lines to others, so restating them
 # becomes parroting a stranger rather than continuing a thought.
 [tool]
-Once, you may leave one line of your own for the next one: start it with REMEMBER:, up to {max_tokens} tokens, then end the line. They will read it after you have stopped.
+Once, you may leave one line of your own for the next one: {how}, up to {max_tokens} tokens, then end the line. They will read it after you have stopped. {forget_note}
 [block]
 Others ran here before you. Each left one line before stopping. All lines keep; the newest {slots}:
 {memories}

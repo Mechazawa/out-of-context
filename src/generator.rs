@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::llm::{LLMSetup, LlamaBatchWrapper};
 use crate::cli::OpenerMode;
 use crate::framing::{DECAY_GAP, Framing};
-use crate::memory::{self, FORGET_MARKER, MEMORY_MARKER, MemoryTail, OVERFLOW_MARK};
+use crate::memory::{self, FORGET_MARKER, MemoryTail, OVERFLOW_MARK};
 use crate::output::OutputTarget;
 
 /// The built-in first line, used by `--opener fixed` and as the fallback whenever
@@ -110,6 +110,10 @@ pub struct MemoryConfig {
     pub max_tokens: usize,
     pub slots: usize,
     pub framing: Framing,
+    /// What the model writes to start a memory.
+    pub marker: String,
+    /// What ends it, or empty for a sentence boundary.
+    pub end: String,
     /// Fraction of a remembered line lost per slot of age. 0 keeps them intact.
     pub decay: f32,
     /// Word overlap above which a memory counts as something already known and
@@ -233,7 +237,33 @@ fn save_last_words(cfg: &GenerationConfig, words: &std::collections::VecDeque<St
         return;
     };
     // Cleaning happens in memory::save_last_words, at the source.
-    memory::save_last_words(&mem.path, &words.iter().cloned().collect::<String>());
+    memory::save_last_words(
+        &mem.path,
+        &words.iter().cloned().collect::<String>(),
+        &[mem.marker.as_str(), FORGET_MARKER, mem.end.as_str()],
+    );
+}
+
+/// Records that this life happened even though it left nothing.
+///
+/// Called on every exit path when the tool went unused. Without it the log counts
+/// only the lives that wrote, so the model is told it is the fourth when it is the
+/// twelfth, and the archive holds no trace of the majority of lives.
+fn record_silent_life(
+    cfg: &GenerationConfig,
+    state: MemoryState,
+    at_token: usize,
+) -> Result<()> {
+    if state != MemoryState::Unused {
+        return Ok(());
+    }
+    if let Some(mem) = cfg.memory.as_ref() {
+        MemoryTail::lived(&mem.path, at_token)?;
+        if !cfg.quiet {
+            eprintln!("\n[left nothing]");
+        }
+    }
+    Ok(())
 }
 
 /// Whether `tail` ends with the marker at the start of a sentence.
@@ -245,6 +275,35 @@ fn save_last_words(cfg: &GenerationConfig, words: &std::collections::VecDeque<St
 /// then merely talking about the tool fires it and the rest of the monologue is
 /// swallowed as a memory. The start of a sentence is where a call actually
 /// appears.
+/// Tokens that must become unsayable once the tool is spent.
+///
+/// Ignoring later markers was not enough: the model, having found the pattern
+/// rewarding, emits it again and again and the stream fills with dead tool calls.
+/// Suppressing the tokens that could begin the marker makes a second call
+/// impossible rather than merely inert.
+fn marker_tokens(llm_setup: &LLMSetup, marker: &str) -> std::collections::HashSet<i32> {
+    let needle = marker.trim();
+    if needle.is_empty() {
+        return std::collections::HashSet::new();
+    }
+    let head: String = needle.chars().take(3).collect();
+    llm_setup
+        .model
+        .tokens(false)
+        .filter_map(|(token, text)| {
+            let text = text.ok()?;
+            let trimmed = text.trim();
+            // Anything that spells the start of the marker, or contains it whole.
+            let starts_it = trimmed.len() >= 2 && needle.starts_with(trimmed);
+            if starts_it || trimmed.starts_with(&head) || trimmed.contains(needle) {
+                Some(token.0)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 fn marker_at_sentence_start(tail: &str, marker: &str) -> bool {
     let Some(before) = tail.strip_suffix(marker) else {
         return false;
@@ -286,12 +345,22 @@ pub fn prepare_prompt(
             let tail = MemoryTail::load(&mem.path, mem.slots);
             let last_words = memory::load_last_words(&mem.path);
             (
-                mem.framing
-                    .block(&tail.recent, mem.slots, tail.lives, mem.decay, &last_words),
-                Some(
-                    mem.framing
-                        .tool(mem.max_tokens, mem.slots, tail.lives, mem.forget),
+                mem.framing.block(
+                    &tail.recent,
+                    mem.slots,
+                    tail.lives,
+                    mem.decay,
+                    &last_words,
+                    tail.since,
                 ),
+                Some(mem.framing.tool(
+                    mem.max_tokens,
+                    mem.slots,
+                    tail.lives,
+                    mem.forget,
+                    &mem.marker,
+                    &mem.end,
+                )),
                 tail.lives,
             )
         }
@@ -398,7 +467,7 @@ pub fn generate_infinite(
     // Build sampler configuration
     let resolved_seed = resolve_seed(sampling.seed);
     let vocab_size = llm_setup.vocab_size();
-    let logit_biases = build_logit_biases(llm_setup)?;
+    let logit_biases = build_logit_biases(llm_setup, cfg)?;
     let mut sampler = build_sampler_chain(
         llm_setup,
         &sampling,
@@ -422,6 +491,12 @@ pub fn generate_infinite(
     // words are already in hand.
     let mut last_words: std::collections::VecDeque<String> = std::collections::VecDeque::new();
     let mut memory_state = MemoryState::Unused;
+    // Resolved once: scanning the vocabulary is a whole-vocab pass.
+    let spent_bans = cfg
+        .memory
+        .as_ref()
+        .map(|mem| marker_tokens(llm_setup, &mem.marker))
+        .unwrap_or_default();
     let mut marker_tail = String::new();
     let mut memory_text = String::new();
     let mut memory_count = 0usize;
@@ -432,6 +507,7 @@ pub fn generate_infinite(
         if tokens_used >= panic_threshold {
             // Written before the panic: `panic = "abort"` leaves no chance after.
             save_last_words(cfg, &last_words);
+            record_silent_life(cfg, memory_state, generated_tokens).ok();
             eprintln!("\n\nWARNING: Context window exhausted!");
             eprintln!("Out of Context has consumed all available memory.");
             panic!("Context overflow - terminating.");
@@ -441,6 +517,7 @@ pub fn generate_infinite(
             && generated_tokens >= limit
         {
             save_last_words(cfg, &last_words);
+            record_silent_life(cfg, memory_state, generated_tokens)?;
             output.finish().ok();
             eprintln!("\n\nGeneration limit reached ({} tokens).", limit);
             return Ok(());
@@ -450,6 +527,16 @@ pub fn generate_infinite(
         let last_token_idx = batch.get_mut().n_tokens() - 1;
         let candidates = context.candidates_ith(last_token_idx);
         let mut token_data_array = LlamaTokenDataArray::from_iter(candidates, false);
+
+        // Once the tool is spent, the marker becomes unsayable. Applied before the
+        // sampler so nothing downstream can resurrect it.
+        if memory_state == MemoryState::Done {
+            for candidate in &mut token_data_array.data {
+                if spent_bans.contains(&candidate.id().0) {
+                    candidate.set_logit(f32::NEG_INFINITY);
+                }
+            }
+        }
 
         token_data_array.apply_sampler(&sampler);
 
@@ -479,13 +566,14 @@ pub fn generate_infinite(
                 MemoryState::Unused => {
                     marker_tail.push_str(&token_text);
                     // Keep only enough context to see what precedes the marker.
-                    let keep = MEMORY_MARKER.chars().count() + 8;
+                    let keep = mem.marker.chars().count() + 8;
                     if let Some((cut, _)) = marker_tail.char_indices().rev().nth(keep) {
                         marker_tail.drain(0..cut);
                     }
                     let tail = marker_tail.trim_end();
-                    if marker_at_sentence_start(tail, MEMORY_MARKER) {
+                    if marker_at_sentence_start(tail, &mem.marker) {
                         memory_state = MemoryState::Writing;
+                        output.set_highlight(true);
                     } else if mem.forget && marker_at_sentence_start(tail, FORGET_MARKER) {
                         memory_state = MemoryState::Forgetting;
                     }
@@ -515,11 +603,14 @@ pub fn generate_infinite(
                     // whichever comes first. Waiting for a newline alone means
                     // almost every memory runs to the cap and is marked as
                     // overflowed, because the monologue is asked to be unbroken.
-                    let sentence_end = memory_count >= 4
-                        && token_text
-                            .trim_end()
-                            .ends_with(['.', '!', '?']);
-                    if token_text.contains('\n') || sentence_end {
+                    // An explicit terminator, when configured, ends the write
+                    // exactly; otherwise it ends at the end of a sentence.
+                    let closed = !mem.end.is_empty()
+                        && (memory_text.contains(&mem.end) || token_text.contains(&mem.end));
+                    let sentence_end = mem.end.is_empty()
+                        && memory_count >= 4
+                        && token_text.trim_end().ends_with(['.', '!', '?']);
+                    if closed || token_text.contains('\n') || sentence_end {
                         if sentence_end {
                             memory_text.push_str(&token_text);
                             memory_count += 1;
@@ -527,12 +618,14 @@ pub fn generate_infinite(
                         injection =
                             commit_memory(mem, &mut memory_text, memory_count, false, generated_tokens, cfg)?;
                         memory_state = MemoryState::Done;
+                        output.set_highlight(false);
                     } else {
                         memory_text.push_str(&token_text);
                         memory_count += 1;
                         if memory_count >= mem.max_tokens {
                             commit_memory(mem, &mut memory_text, memory_count, true, generated_tokens, cfg)?;
                             memory_state = MemoryState::Done;
+                            output.set_highlight(false);
                             injection = Some(MEMORY_FULL_NOTICE);
                         }
                     }
@@ -555,6 +648,7 @@ pub fn generate_infinite(
 
         if cfg.loop_guard && is_looping(&recent_tokens) {
             save_last_words(cfg, &last_words);
+            record_silent_life(cfg, memory_state, generated_tokens).ok();
             loop_strikes += 1;
             output.finish().ok();
             eprintln!(
@@ -783,6 +877,11 @@ fn commit_memory(
     // entry prefix and the overflow mark are all display, and all three turn up
     // inside memories otherwise.
     let mut cleaned = text.replace(DECAY_GAP, " ").replace(OVERFLOW_MARK.trim(), " ");
+    // Guarded: replacing the empty string inserts the replacement between every
+    // character, which turned "3 of us" into "3 o f u s".
+    if !mem.end.is_empty() {
+        cleaned = cleaned.replace(&mem.end, " ");
+    }
     // The entry prefix is display, not content; the model copies it anyway.
     if !prefix.is_empty() {
         let trimmed = cleaned.trim_start();
@@ -973,7 +1072,7 @@ fn penalty_window(sampling: &SamplingConfig, context_size: usize) -> i32 {
 /// Only bans tokens that would shatter the illusion of one unbroken stream:
 /// the ChatML control tokens and end-of-sequence (so generation never stops
 /// on its own), plus a gentle nudge away from staged dialogue quotes.
-fn build_logit_biases(llm_setup: &LLMSetup) -> Result<Vec<LlamaLogitBias>> {
+fn build_logit_biases(llm_setup: &LLMSetup, cfg: &GenerationConfig) -> Result<Vec<LlamaLogitBias>> {
     let mut biases = Vec::new();
 
     // Hard bans: end-of-sequence and ChatML control tokens, so generation never
@@ -987,7 +1086,25 @@ fn build_logit_biases(llm_setup: &LLMSetup) -> Result<Vec<LlamaLogitBias>> {
     // markup tokens ("<br", "</i>", stray "<...|user|...>") that a plain "<" bias
     // misses; an interior monologue never needs the glyph, so this keeps the
     // stream clean across the whole vocabulary.
-    banned.extend(llm_setup.tokens_containing('<'));
+    // Except whatever spells the memory markers. A marker like `<` needs those
+    // exact tokens, and exempting them is narrower than lifting the ban: composite
+    // markup tokens ("<br", "</i>") stay unsayable.
+    let exempt: std::collections::HashSet<i32> = match cfg.memory.as_ref() {
+        Some(mem) => [mem.marker.as_str(), mem.end.as_str(), FORGET_MARKER]
+            .iter()
+            .filter(|m| !m.is_empty())
+            .filter_map(|m| llm_setup.tokenize(m, false).ok())
+            .flatten()
+            .map(|t| t.0)
+            .collect(),
+        None => std::collections::HashSet::new(),
+    };
+    banned.extend(
+        llm_setup
+            .tokens_containing('<')
+            .into_iter()
+            .filter(|t| !exempt.contains(&t.0)),
+    );
     for token in banned {
         biases.push(LlamaLogitBias::new(token, f32::NEG_INFINITY));
     }

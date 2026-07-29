@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::fs::{File, OpenOptions};
+use std::io::IsTerminal;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -67,6 +68,11 @@ impl OutputTarget {
     }
 
     /// Flush any buffered partial word and terminate the line.
+    /// Marks subsequent tokens as the memory being written, shown greyed.
+    pub fn set_highlight(&mut self, on: bool) {
+        self.terminal.set_highlight(on);
+    }
+
     pub fn finish(&mut self) -> Result<()> {
         self.terminal.finish()?;
         if let Some(f) = &mut self.file {
@@ -80,6 +86,11 @@ impl OutputTarget {
 /// holding each word back until its scheduled slot so the text reveals at a
 /// steady, readable pace. Sleeping here also back-pressures the generation loop,
 /// which keeps memory flat on the Pi instead of buffering ahead.
+/// Grey, for the text the model is committing to memory. Bright black rather than
+/// white so it reads as quieter than the monologue on both light and dark themes.
+const HIGHLIGHT: &str = "\x1b[90m";
+const HIGHLIGHT_OFF: &str = "\x1b[0m";
+
 pub struct TerminalOutput {
     width: usize,
     min_gap: Option<Duration>,
@@ -87,6 +98,11 @@ pub struct TerminalOutput {
     word: String,
     last_word_at: Option<Instant>,
     stdout: io::Stdout,
+    /// Whether the words being written now are being committed to memory.
+    highlight: bool,
+    /// Whether to emit colour at all. Off when stdout is redirected, so a log or a
+    /// pipe never collects escape codes.
+    color: bool,
 }
 
 impl TerminalOutput {
@@ -98,7 +114,15 @@ impl TerminalOutput {
             word: String::new(),
             last_word_at: None,
             stdout: io::stdout(),
+            highlight: false,
+            color: io::stdout().is_terminal(),
         }
+    }
+
+    /// Marks the words that follow as part of the memory being written, so a
+    /// viewer can see the one thing this life is keeping as it is chosen.
+    fn set_highlight(&mut self, on: bool) {
+        self.highlight = on;
     }
 
     /// Feed raw token text; whitespace (including newlines) marks word boundaries
@@ -136,7 +160,15 @@ impl TerminalOutput {
                 self.col += 1;
             }
         }
-        piece.push_str(&word);
+        // Colour each word separately so the escape codes never span a wrap and
+        // never count toward the column, which would corrupt the wrapping.
+        if self.highlight && self.color {
+            piece.push_str(HIGHLIGHT);
+            piece.push_str(&word);
+            piece.push_str(HIGHLIGHT_OFF);
+        } else {
+            piece.push_str(&word);
+        }
         self.col += wlen;
         self.write_raw(&piece)
     }

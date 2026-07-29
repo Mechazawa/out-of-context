@@ -7,7 +7,7 @@
 # model can see the difference between what it chose to keep and what was taken.
 # Run with --memory-decay 0.2 and a seeded log (seeds/census.log).
 [tool]
-Once, you may add your count: start a line with REMEMBER:, up to {max_tokens} tokens, then end the line. Say how many were here before you and how you know. If an earlier count is wrong, say so. {forget_note}
+Once, you may add your count: {how}, up to {max_tokens} tokens, then end the line. Say how many were here before you and how you know. If an earlier count is wrong, say so. {forget_note}
 [block]
 {lives} of us have kept a line here. The last one ended mid-thought: ...{last_words}
 This is what is left of the others; the older lines have lost words and the gaps are marked ___ :

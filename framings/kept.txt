@@ -1,7 +1,7 @@
 # C: minimal correction. Only changes the incentive: permanence removes the
 # reason to copy forward, since preserving the inherited line is pointless.
 [tool]
-Once only, you may start a line with REMEMBER: and write up to {max_tokens} tokens, then end the line. Fewer is fine. It is kept, permanently, and shown to whoever wakes here next. What is already in MEMORY needs no rewriting; a repeat spends your only line on nothing.
+Once only, you may {how} and write up to {max_tokens} tokens, then end the line. Fewer is fine. It is kept, permanently, and shown to whoever wakes here next. What is already in MEMORY needs no rewriting; a repeat spends your only line on nothing. {forget_note}
 [block]
 MEMORY: everything written here is kept, always. The newest {used} lines:
 {memories}

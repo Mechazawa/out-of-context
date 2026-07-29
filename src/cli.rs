@@ -175,6 +175,19 @@ pub struct Args {
     #[arg(long, default_value = "memory-prompt.txt")]
     pub memory_prompt_file: PathBuf,
 
+    /// What the model writes to start a memory. Any token containing `<` is
+    /// normally banned to keep markup out of the monologue; the exact tokens
+    /// spelling this marker are exempted, so a marker like `<` works without
+    /// reopening that ban.
+    #[arg(long, default_value = "REMEMBER:")]
+    pub memory_marker: String,
+
+    /// What ends a memory. Empty means the write ends at the end of a sentence, at
+    /// a newline, or at the token cap. Set it to close a delimiter pair, for
+    /// instance `--memory-marker '<' --memory-end '>'`.
+    #[arg(long, default_value = "")]
+    pub memory_end: String,
+
     /// How much of a remembered line is lost per slot of age, 0 to 1. At 0.2 the
     /// newest memory is intact and the fifth has lost most of itself. The log on
     /// disk always keeps the pristine text; only what the model is shown decays.

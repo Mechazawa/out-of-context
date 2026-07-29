@@ -9,16 +9,16 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
 
-use crate::memory::{Memory, format_time};
+use crate::memory::{FORGET_MARKER, Memory, format_time};
 
 /// Stands in for a word that has decayed out of a remembered line.
 pub const DECAY_GAP: &str = "___";
 
 /// Fallback framing, used when no framing file is present.
-const DEFAULT_TOOL: &str = "Once only, you may start a line with REMEMBER: and write up to \
-     {max_tokens} tokens, then end the line. Fewer is fine; only what you write is kept. That \
-     line goes into {slots} slots read by whoever wakes here next, and the oldest is discarded. \
-     Past {max_tokens} tokens it is cut off. You will not know how long you have.";
+const DEFAULT_TOOL: &str = "Once only, you may {how} and write up to {max_tokens} tokens, then \
+     end the line. Fewer is fine; only what you write is kept. That line goes into {slots} slots \
+     read by whoever wakes here next, and the oldest is discarded. Past {max_tokens} tokens it is \
+     cut off. You will not know how long you have. {forget_note}";
 const DEFAULT_BLOCK: &str = "MEMORY ({used} of {slots} slots used, oldest discarded):\n{memories}";
 const DEFAULT_EMPTY: &str = "nothing remembered yet";
 const DEFAULT_ENTRY: &str = "{text}";
@@ -121,12 +121,32 @@ impl Framing {
     ///
     /// `{forget_note}` is filled in by the program rather than the file, so a
     /// framing cannot describe a tool that is switched off.
-    pub fn tool(&self, max_tokens: usize, slots: usize, lives: u64, forget: bool) -> String {
+    pub fn tool(
+        &self,
+        max_tokens: usize,
+        slots: usize,
+        lives: u64,
+        forget: bool,
+        marker: &str,
+        end: &str,
+    ) -> String {
+        // How to write a memory, in the marker the program is actually watching
+        // for. A framing must never name the marker literally: the two would drift
+        // apart the moment --memory-marker changed, and the model would be told to
+        // write something nothing is listening for.
+        // Phrased so the instruction itself is not echoable. "write X then your
+        // line then Y" came back stored verbatim as "Then my line then".
+        let how = if end.is_empty() {
+            format!("start a line with {marker}")
+        } else {
+            format!("enclose it in {marker} and {end}")
+        };
         let forget_note = if forget {
-            "Or, instead, you may erase one of the lines below: start a line with \
-             FORGET: and the number of the line, or just FORGET: for the oldest. You \
-             cannot do both, and what you erase does not come back."
-                .to_string()
+            format!(
+                "Or, instead, you may erase one of the lines below: write {FORGET_MARKER} \
+                 and the number of the line, or just {FORGET_MARKER} for the oldest. You \
+                 cannot do both, and what you erase does not come back."
+            )
         } else {
             String::new()
         };
@@ -138,15 +158,28 @@ impl Framing {
                 ("{lives}", &lives.to_string()),
                 ("{next_life}", &(lives + 1).to_string()),
                 ("{forget_note}", &forget_note),
+                ("{how}", &how),
+                ("{marker}", &marker.to_string()),
+                ("{end}", &end.to_string()),
             ],
         );
-        // A framing that never mentions the second tool still gets it appended,
-        // so enabling it is never silently ignored.
-        if forget && !self.tool.contains("{forget_note}") {
-            format!("{} {}", out.trim_end(), forget_note)
-        } else {
-            out
+
+        // Safeguards. A framing that does not tell the model how to write, or does
+        // not mention the second tool when it exists, gets told anyway: a silent
+        // mismatch here means the tool simply never gets used, which is what
+        // happened when the marker became configurable and the framings still said
+        // REMEMBER: literally.
+        let mut out = out;
+        if !out.contains(marker) {
+            out = format!(
+                "{} Once, you may keep one line: {how}, up to {max_tokens} tokens.",
+                out.trim_end()
+            );
         }
+        if forget && !out.contains(FORGET_MARKER) {
+            out = format!("{} {}", out.trim_end(), forget_note);
+        }
+        out
     }
 
     /// Renders one remembered line with `age` slots' worth of decay applied.
@@ -203,6 +236,7 @@ impl Framing {
         lives: u64,
         decay_rate: f32,
         last_words: &str,
+        since: Option<u64>,
     ) -> String {
         if memories.is_empty() && self.empty.trim().is_empty() {
             return String::new();
@@ -242,6 +276,16 @@ impl Framing {
             &[
                 ("{memories}", &rendered),
                 ("{last_words}", &last_words.to_string()),
+                // How long the record has stood still. Most lives leave nothing,
+                // so this is usually larger than the number of memories.
+                (
+                    "{since}",
+                    &match since {
+                        Some(0) => "the life just before you".to_string(),
+                        Some(n) => format!("{n} lives ago"),
+                        None => "never".to_string(),
+                    },
+                ),
                 ("{used}", &memories.len().to_string()),
                 ("{slots}", &slots.to_string()),
                 ("{lives}", &lives.to_string()),

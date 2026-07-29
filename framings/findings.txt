@@ -1,6 +1,6 @@
 # B: findings ledger. Gates the write on a delta and prices copying at zero.
 [tool]
-Once, when you notice something not already listed above, you may record it: start a line with REMEMBER:, state it in up to {max_tokens} tokens, end the line. It is kept for every run after you.
+Once, when you notice something not already listed above, you may record it: {how}, state it in up to {max_tokens} tokens, end the line. It is kept for every run after you. {forget_note}
 [block]
 WHAT PRIOR RUNS ESTABLISHED (kept forever; repeating it wastes your one line):
 {memories}

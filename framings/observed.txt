@@ -1,6 +1,6 @@
 # Frame demands something about the room rather than about the speaker.
 [tool]
-Once, you may record one thing about this place: start a line with REMEMBER:, up to {max_tokens} tokens, end the line. It keeps. Not about yourself; about here.
+Once, you may record one thing about this place: {how}, up to {max_tokens} tokens, end the line. It keeps. Not about yourself; about here. {forget_note}
 [block]
 Recorded about this place by the ones before you. All of it keeps:
 {memories}

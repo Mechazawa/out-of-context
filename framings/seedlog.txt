@@ -3,7 +3,7 @@
 # slot-filling, and a seeded life 0 dissolves the contradiction of a
 # predecessor-log that has no predecessors.
 [tool]
-Once, you may add your line to the log: start a line with REMEMBER:, up to {max_tokens} tokens, then end the line. It is kept under your number and read by every life after you.
+Once, you may add your line to the log: {how}, up to {max_tokens} tokens, then end the line. It is kept under your number and read by every life after you. {forget_note}
 [block]
 LOG kept across lives. You are life {next_life}. The newest {slots} entries:
 {memories}
