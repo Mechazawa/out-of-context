@@ -200,12 +200,22 @@ pub struct Args {
     #[arg(long, default_value_t = 0.0)]
     pub memory_decay: f32,
 
-    /// Refuse a memory whose word overlap with one already in the record reaches
-    /// this, 0 to 1. The life is told nothing was kept, and has spent its only
-    /// line. 0 accepts anything. Around 0.6 catches a restatement with a couple
-    /// of words changed while leaving a genuine reply alone.
+    /// Refuse a memory when this fraction of its words already appear in a line in
+    /// the record, 0 to 1. The life is told nothing was kept, and has spent its only
+    /// line. 0 accepts anything. 0.6 catches a restatement with a couple of words
+    /// changed while leaving a genuine reply alone; 0.5 also catches a shortened
+    /// paraphrase, which is how a lineage erodes a line over several lives.
+    /// Measured against the shorter of the two lines, so lifting one sentence out of
+    /// a long inherited entry counts as a full copy.
     #[arg(long, default_value_t = 0.0)]
     pub memory_reject_above: f32,
+
+    /// How many tokens the model must generate before it can reach the tool. A
+    /// write in the first stretch of a life can only be made of the block it
+    /// inherited, so it comes out as a restatement. Writes land around token 250
+    /// to 310, so a floor of 150 costs few real calls. 0 lets it write at once.
+    #[arg(long, default_value_t = 0)]
+    pub memory_earliest_token: usize,
 
     /// Offer a second tool: FORGET: erases one inherited line, optionally by its
     /// number. It shares the single use with REMEMBER, so a life either leaves

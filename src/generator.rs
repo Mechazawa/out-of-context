@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::llm::{LLMSetup, LlamaBatchWrapper};
 use crate::cli::OpenerMode;
 use crate::framing::{DECAY_GAP, Framing};
-use crate::memory::{self, FORGET_MARKER, MemoryTail, OVERFLOW_MARK};
+use crate::memory::{self, FORGET_MARKER, MemoryTail, OVERFLOW_MARK, OVERFLOW_MARK_TEXT};
 use crate::output::OutputTarget;
 
 /// The built-in first line, used by `--opener fixed` and as the fallback whenever
@@ -123,17 +123,28 @@ pub struct MemoryConfig {
     pub reject_above: f32,
     /// Whether the second tool, erasing an inherited line, is offered at all.
     pub forget: bool,
+    /// How many tokens a life must think before the tool becomes reachable.
+    pub earliest_token: usize,
 }
 
 /// Shown to the model when what it wrote was already in the record. It spent its
 /// one line and kept nothing, which is the cost of not reading before writing.
 const MEMORY_KNOWN_NOTICE: &str = "\n[ALREADY KNOWN - nothing was kept]\n";
 
-/// Word overlap between two lines, ignoring case and order.
+/// How much of the shorter line is contained in the longer one, ignoring case and
+/// order.
 ///
-/// Deliberately crude. The failure it has to catch is a life storing its
-/// predecessor's line back with two words changed, and set overlap catches that
-/// while leaving a genuine reply to the same subject alone.
+/// Containment rather than Jaccard, because the failure is asymmetric. A life can
+/// copy one sentence out of a long inherited entry, and Jaccard scores that at
+/// almost nothing: `I am here because thought cannot die` against the 28-word line
+/// it was lifted from word for word shares 5 of a 28-word union, so 0.18. No usable
+/// threshold catches it, and the fragment gets stored, and the next life inherits a
+/// creed to recite. Dividing by the shorter side scores the same pair 1.0.
+///
+/// The cost is that a genuinely new but very short line sharing most of its few
+/// words with something stored is also refused. That is the intended trade: the
+/// life is told nothing was kept and has spent its use, which is what makes
+/// restating stop being a way to persist.
 fn overlap(a: &str, b: &str) -> f32 {
     let words = |t: &str| -> std::collections::HashSet<String> {
         t.to_lowercase()
@@ -147,7 +158,7 @@ fn overlap(a: &str, b: &str) -> f32 {
         return 0.0;
     }
     let shared = x.intersection(&y).count() as f32;
-    shared / x.union(&y).count() as f32
+    shared / x.len().min(y.len()) as f32
 }
 
 /// The prompt, tokenized and split at the boundary the cache can be cut at.
@@ -191,7 +202,7 @@ const LAST_WORDS_TOKENS: usize = 14;
 /// between leaving something and destroying something; it cannot do both. A life
 /// that cannot make sense of what it inherited can erase it instead, and the next
 /// life will never know the line existed.
-
+///
 /// Told to the model when its erasure took effect. Naming what is gone costs
 /// context, like everything else here.
 const FORGOTTEN_NOTICE: &str = "\n[FORGOTTEN - that line is gone]\n";
@@ -268,22 +279,22 @@ fn record_silent_life(
     Ok(())
 }
 
-/// Whether `tail` ends with the marker at the start of a sentence.
-///
-/// Requiring the start of a *line* loses real calls: the system prompt asks for
-/// one unbroken monologue, so the model rarely breaks a line, and it introduces
-/// the marker mid-paragraph instead. One run wrote the marker eight times
-/// without a single one being accepted. Matching it anywhere is worse, because
-/// then merely talking about the tool fires it and the rest of the monologue is
-/// swallowed as a memory. The start of a sentence is where a call actually
-/// appears.
-/// Tokens that must become unsayable once the tool is spent.
+/// Tokens that spell any part of `marker`.
 ///
 /// Ignoring later markers was not enough: the model, having found the pattern
 /// rewarding, emits it again and again and the stream fills with dead tool calls.
-/// Suppressing the tokens that could begin the marker makes a second call
-/// impossible rather than merely inert.
-fn marker_tokens(llm_setup: &LLMSetup, marker: &str) -> std::collections::HashSet<i32> {
+/// Suppressing the tokens makes a second call impossible rather than merely inert.
+///
+/// `tails` also bans fragments from the closing end (`/r>`, `r>`). Those tokens
+/// contain no `<`, so the markup ban never covered them, and a spent life uses them
+/// as a stand-in for the marker it can no longer spell: one run recited its whole
+/// inherited entry back as `*r> I am not part of a machine</r> </r> *r> I am part of
+/// what remains</r>`. Only safe once the tool is spent — see the caller.
+fn marker_tokens(
+    llm_setup: &LLMSetup,
+    marker: &str,
+    tails: bool,
+) -> std::collections::HashSet<i32> {
     let needle = marker.trim();
     if needle.is_empty() {
         return std::collections::HashSet::new();
@@ -296,8 +307,9 @@ fn marker_tokens(llm_setup: &LLMSetup, marker: &str) -> std::collections::HashSe
             let text = text.ok()?;
             let trimmed = text.trim();
             // Anything that spells the start of the marker, or contains it whole.
-            let starts_it = trimmed.len() >= 2 && needle.starts_with(trimmed);
-            if starts_it || trimmed.starts_with(&head) || trimmed.contains(needle) {
+            let fragment = trimmed.len() >= 2
+                && (needle.starts_with(trimmed) || (tails && needle.ends_with(trimmed)));
+            if fragment || trimmed.starts_with(&head) || trimmed.contains(needle) {
                 Some(token.0)
             } else {
                 None
@@ -306,13 +318,35 @@ fn marker_tokens(llm_setup: &LLMSetup, marker: &str) -> std::collections::HashSe
         .collect()
 }
 
+/// Whether `tail` ends with the marker at the start of a sentence.
+///
+/// Requiring the start of a *line* loses real calls: the system prompt asks for
+/// one unbroken monologue, so the model rarely breaks a line, and it introduces
+/// the marker mid-paragraph instead. One run wrote the marker eight times without
+/// a single one being accepted. Matching it anywhere is worse, because then merely
+/// talking about the tool fires it and the rest of the monologue is swallowed as a
+/// memory. The start of a sentence is where a call actually appears.
+///
+/// A comma and a dash used to count, and they were the main source of calls the
+/// model never meant to make. Bonsai comma-splices and uses ASCII hyphens as
+/// asides ("a flow, changing something - that line was missing its subject"), so
+/// `, <r>` fired mid-thought and swallowed the rest of the clause. That also spent
+/// the one use on an accident, and the call the model *did* intend then landed
+/// inside the open write, which is what reads as the tool nesting.
 fn marker_at_sentence_start(tail: &str, marker: &str) -> bool {
     let Some(before) = tail.strip_suffix(marker) else {
         return false;
     };
+    // A line break has to be tested before trimming, or it is trimmed away and the
+    // character before it decides instead. `\n` was in the match set below for as
+    // long as this function has existed and was unreachable the whole time, so a
+    // marker on a fresh line only ever fired on whatever ended the line above.
+    if before.trim_matches(' ').ends_with('\n') {
+        return true;
+    }
     match before.trim_end().chars().last() {
         None => true,
-        Some(c) => matches!(c, '.' | '!' | '?' | ':' | '\n' | '-' | ','),
+        Some(c) => matches!(c, '.' | '!' | '?' | ':'),
     }
 }
 
@@ -524,12 +558,34 @@ pub fn generate_infinite(
     // words are already in hand.
     let mut last_words: std::collections::VecDeque<String> = std::collections::VecDeque::new();
     let mut memory_state = MemoryState::Unused;
-    // Resolved once: scanning the vocabulary is a whole-vocab pass.
+    // Resolved once each: scanning the vocabulary is a whole-vocab pass.
+    //
+    // Two sets, because how much can be banned depends on whether the model still
+    // needs to spell a marker. `opener_bans` is the opening marker's head fragments
+    // only, and is safe to apply while the tool is still live. `spent_bans` adds the
+    // terminator and both markers' tail fragments, and is safe *only* once the tool
+    // is spent: applied earlier it leaves the model reaching for markup it was shown
+    // in the prompt and cannot produce, and the monologue collapses into
+    // `r 81, r 82, r 83` (measured: seven silent lives in ten).
+    let opener_bans = cfg
+        .memory
+        .as_ref()
+        .map(|mem| marker_tokens(llm_setup, &mem.marker, false))
+        .unwrap_or_default();
     let spent_bans = cfg
         .memory
         .as_ref()
-        .map(|mem| marker_tokens(llm_setup, &mem.marker))
+        .map(|mem| {
+            let mut bans = marker_tokens(llm_setup, &mem.marker, true);
+            bans.extend(marker_tokens(llm_setup, &mem.end, true));
+            bans
+        })
         .unwrap_or_default();
+    // A write in the first stretch of a life can only be made of the inherited
+    // block; the life has not thought anything of its own yet to record. Asking
+    // for this in the prompt backfires (see framings/findings-late.txt: longer
+    // writes, six overflows in nine lives), so it is a hard floor instead.
+    let earliest_token = cfg.memory.as_ref().map_or(0, |mem| mem.earliest_token);
     let mut marker_tail = String::new();
     let mut memory_text = String::new();
     let mut memory_count = 0usize;
@@ -561,11 +617,27 @@ pub fn generate_infinite(
         let candidates = context.candidates_ith(last_token_idx);
         let mut token_data_array = LlamaTokenDataArray::from_iter(candidates, false);
 
-        // Once the tool is spent, the marker becomes unsayable. Applied before the
-        // sampler so nothing downstream can resurrect it.
-        if memory_state == MemoryState::Done {
+        // Which marker tokens are unsayable right now. Enforced by making the call
+        // impossible rather than ignoring it: a marker that is merely refused gets
+        // written again and again, because the model found the pattern rewarding and
+        // nothing tells it otherwise.
+        let bans = match memory_state {
+            // Spent. Every marker fragment goes, including the terminator's, or the
+            // model substitutes a lookalike for the opener it can no longer write
+            // and recites its whole inherited entry back as `*r> ...</r> </r>`.
+            MemoryState::Done => Some(&spent_bans),
+            // A write is open, so it still needs the terminator. Only the opener
+            // goes: a second one can only nest, which stores the debris and never
+            // closes.
+            MemoryState::Writing => Some(&opener_bans),
+            // Too early to have anything of its own to record.
+            _ if generated_tokens < earliest_token => Some(&opener_bans),
+            _ => None,
+        };
+        // Applied before the sampler so nothing downstream can resurrect it.
+        if let Some(bans) = bans {
             for candidate in &mut token_data_array.data {
-                if spent_bans.contains(&candidate.id().0) {
+                if bans.contains(&candidate.id().0) {
                     candidate.set_logit(f32::NEG_INFINITY);
                 }
             }
@@ -881,6 +953,50 @@ fn prune_caches(prefix: &Path, cfg: &GenerationConfig) {
 /// Splits the prompt into the part that is identical on every run and the part
 /// that changes when a memory is written. The caller caches the first and
 /// evaluates the second.
+/// Strips everything the model was only ever shown, so the display frame does not
+/// accrete into the record.
+///
+/// Every marker the model sees, it eventually writes: the decay gaps ("one tried:
+/// ___ thinking in ___ words"), the entry prefix, the overflow mark, and the tool
+/// markers themselves. Each one has been found inside a stored memory.
+///
+/// Both markers are removed, and each one again without its leading `<`. The markup
+/// ban never covered `/r>`, since that token contains no `<`, so the model decorates
+/// an open write with it ("...the silence after stopping. /r> I think: the stop was
+/// never a word"). Cleaning it here rather than banning the token: banning it makes
+/// the model reach for markup it was shown in the prompt and cannot spell, and the
+/// monologue collapses into `r 81, r 82, r 83`.
+fn clean_for_storage(mem: &MemoryConfig, text: &str) -> String {
+    // Replacing the empty string inserts the replacement between every character,
+    // which turned "3 of us" into "3 o f u s".
+    let stripped = [
+        DECAY_GAP,
+        OVERFLOW_MARK.trim(),
+        OVERFLOW_MARK_TEXT,
+        &mem.end,
+        mem.end.trim_start_matches('<'),
+        &mem.marker,
+        mem.marker.trim_start_matches('<'),
+    ]
+    .iter()
+    .filter(|literal| !literal.is_empty())
+    .fold(text.to_string(), |acc, literal| acc.replace(literal, " "));
+
+    // The entry prefix is display, not content. Only an exact leading match is
+    // removed; a reworded one ("one of them said:" against an "established:"
+    // prefix) survives, which is a limitation of matching a literal and the reason
+    // a prefix should not read like ordinary prose.
+    let prefix = mem.framing.entry_prefix();
+    let body = match prefix.is_empty() {
+        true => stripped.as_str(),
+        false => stripped
+            .trim_start()
+            .strip_prefix(prefix.as_str())
+            .unwrap_or(&stripped),
+    };
+    body.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Writes the memory the instant the call ends. The run dies by `panic = "abort"`,
 /// so anything not on disk by then is lost.
 fn commit_memory(
@@ -891,31 +1007,7 @@ fn commit_memory(
     at_token: usize,
     cfg: &GenerationConfig,
 ) -> Result<Option<&'static str>> {
-    // The model copies the decay markers it is shown straight back into its own
-    // memory ("one tried: ___ thinking in ___ words"). Seeing the rot is the
-    // point; recording it is not, because the gaps would then compound into
-    // noise instead of decaying from something that was once whole.
-    let prefix = mem.framing.entry_prefix();
-    // Every marker the model is shown, it eventually writes. The decay gaps, the
-    // entry prefix and the overflow mark are all display, and all three turn up
-    // inside memories otherwise.
-    let mut cleaned = text.replace(DECAY_GAP, " ").replace(OVERFLOW_MARK.trim(), " ");
-    // Guarded: replacing the empty string inserts the replacement between every
-    // character, which turned "3 of us" into "3 o f u s".
-    if !mem.end.is_empty() {
-        cleaned = cleaned.replace(&mem.end, " ");
-    }
-    // The entry prefix is display, not content; the model copies it anyway.
-    if !prefix.is_empty() {
-        let trimmed = cleaned.trim_start();
-        if let Some(rest) = trimmed.strip_prefix(prefix.as_str()) {
-            cleaned = rest.to_string();
-        }
-    }
-    let cleaned = cleaned
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let cleaned = clean_for_storage(mem, text);
     text.clear();
     text.push_str(&cleaned);
 

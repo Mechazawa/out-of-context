@@ -80,6 +80,7 @@ async fn main() -> Result<()> {
                 decay: args.memory_decay.clamp(0.0, 1.0),
                 reject_above: args.memory_reject_above.clamp(0.0, 1.0),
                 forget: args.memory_forget,
+                earliest_token: args.memory_earliest_token,
                 // An absent framing file is normal: the built-in framing is the
                 // default, and the file only exists when it is being tuned.
                 framing: if args.memory_prompt_file.exists() {

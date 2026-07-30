@@ -21,6 +21,12 @@ const HEADER: &str =
 /// Appended to what was stored when the model's budget ran out mid-write.
 pub const OVERFLOW_MARK: &str = " - ERR MEMORY OVERFLOW";
 
+/// The mark without its punctuation. The model rewords the dash away when it
+/// copies the mark into its own line ("Why there is no sound is not ERR MEMORY
+/// OVERFLOW — it is the presence of structure"), so stripping only the full mark
+/// let the notice through into the record.
+pub const OVERFLOW_MARK_TEXT: &str = "ERR MEMORY OVERFLOW";
+
 /// Status marking a line that erases an earlier one rather than adding a memory.
 const FORGET_STATUS: &str = "forget";
 
@@ -140,10 +146,7 @@ impl MemoryTail {
     /// A missing or unreadable log yields an empty tail: the piece must still run
     /// on its first life, and a damaged log is indistinguishable from that.
     pub fn load(path: &Path, want: usize) -> Self {
-        match Self::try_load(path, want) {
-            Ok(tail) => tail,
-            Err(_) => Self::default(),
-        }
+        Self::try_load(path, want).unwrap_or_default()
     }
 
     fn try_load(path: &Path, want: usize) -> Result<Self> {
@@ -187,7 +190,7 @@ impl MemoryTail {
                 .iter()
                 .filter(|m| !m.silent && !m.forgotten)
                 .count();
-            if usable >= want + 1 || pos == 0 {
+            if usable > want || pos == 0 {
                 break parsed;
             }
         };
