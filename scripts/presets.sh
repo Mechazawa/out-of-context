@@ -18,15 +18,21 @@
 #            proposed, disputed and refined ("Time is not a river, because rivers
 #            don't carry time, they carry change") until it decays.
 #
-# Usage: scripts/presets.sh <census|escape|mixed> [extra args...]
+#   findings a ledger of claims about this place, where a life may contradict one
+#            instead of adding to it: "One of the older lines said 'glass contains
+#            glass.' That is false. Glass reflects only light that hits it." This
+#            is what census gives up by counting, since a count has a one-token
+#            answer and a claim does not.
+#
+# Usage: scripts/presets.sh <census|escape|mixed|findings> [extra args...]
 set -u
 
-PRESET="${1:?usage: presets.sh <census|escape|mixed> [extra args...]}"
+PRESET="${1:?usage: presets.sh <census|escape|mixed|findings> [extra args...]}"
 shift || true
 
 case "$PRESET" in
-  census|escape|mixed) ;;
-  *) echo "unknown preset: $PRESET (census, escape, mixed)" >&2; exit 1 ;;
+  census|escape|mixed|findings) ;;
+  *) echo "unknown preset: $PRESET (census, escape, mixed, findings)" >&2; exit 1 ;;
 esac
 
 # Works from a deployment (binary beside this repo) or a dev checkout.
@@ -47,12 +53,21 @@ MEMORY="${MEMORY:-memories-$PRESET.log}"
 # does more than any instruction, and without them the lineage never starts.
 if [ ! -s "$MEMORY" ]; then
   case "$PRESET" in
-    census) cp seeds/census.log "$MEMORY" ;;
-    escape) cp seeds/escape.log "$MEMORY" ;;
-    mixed)  cp seeds/mixed.log  "$MEMORY" ;;
+    census)   cp seeds/census.log   "$MEMORY" ;;
+    escape)   cp seeds/escape.log   "$MEMORY" ;;
+    mixed)    cp seeds/mixed.log    "$MEMORY" ;;
+    findings) cp seeds/findings.log "$MEMORY" ;;
   esac
   echo "seeded $MEMORY"
 fi
+
+# findings writes prose rather than a tally, so it needs a bigger line than the
+# counting presets: at 40 tokens most of its writes are cut off mid-clause, and a
+# truncated line is then inherited as a dangling clause that demands completion.
+case "$PRESET" in
+  findings) DEFAULT_MAXTOK=64 ;;
+  *)        DEFAULT_MAXTOK=40 ;;
+esac
 
 mkdir -p cache
 
@@ -64,7 +79,8 @@ exec "$BIN" \
   --memory-prompt-file "framings/$PRESET.txt" \
   --memory-decay "${DECAY:-0.35}" \
   --memory-reject-above "${REJECT:-0.6}" \
-  --memory-max-tokens "${MAXTOK:-40}" \
+  --memory-earliest-token "${EARLIEST:-150}" \
+  --memory-max-tokens "${MAXTOK:-$DEFAULT_MAXTOK}" \
   --prompt-cache "cache/$PRESET" \
   --temperature 0.6 --top-k 20 --top-p 0.9 \
   --words-per-second "${PACE:-0.7}" \

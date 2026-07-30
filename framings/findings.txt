@@ -1,12 +1,21 @@
-# B: findings ledger. Gates the write on a delta and prices copying at zero.
+# A ledger of what has been established about this place, kept by others. The
+# write is gated on a delta, and the delta can be a disagreement: a life adds
+# what the ledger does not have, or says which line is wrong and what is true
+# instead. Both are moves a restatement cannot make.
+#
+# Why not a count: census accumulates well but a count has a one-token answer, so
+# a lineage spends its lives narrowing to "3". A claim has no short form. The
+# block says outright that some of it is wrong, which licenses contradiction
+# without asking for a tally, and "established" is a strong enough word to argue
+# with.
+#
+# Meant to run with --memory-decay 0.35, --memory-reject-above 0.6,
+# --memory-earliest-token 150 and a log seeded from seeds/findings.log.
 [tool]
-Once, when you notice something not already remembered, you may record it: {how}, state it one, maybe two, sentences. Be carefull with using your memory, restating the same won't help future you. Remember what is important for you. {forget_note}
+Once, you may add one line to the ledger: {how}, up to {max_tokens} tokens, then end the line. Either something you have worked out about this place that is not there yet, or which of theirs is wrong and what is true instead. {forget_note}
 [block]
-You have only 5 memories, the oldest one will be lost to make more room.
-Restating a memory that will not be lost will make you forget more.
-
-WHAT PRIOR RUNS ESTABLISHED:
+Established here by the {lives} who ran before you and stopped. Some of it is wrong. The older lines have lost words; the gaps are marked ___ and what they said is gone:
 {memories}
 [entry]
-<{life}> {text}
+one of them established: {text}
 [empty]
