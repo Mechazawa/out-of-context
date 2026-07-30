@@ -87,13 +87,17 @@ thread 'main' panicked at 'Context overflow - terminating.'
 
 The model has exactly one tool: remember. Enabled with `--memory-file`, off otherwise.
 
-- **Calling it.** The model writes `REMEMBER:` at the start of a sentence and the line that follows is kept. A plain text marker, not a ChatML tool call: every token containing `<` is banned to keep markup out of the monologue, and small models do not emit reliable JSON mid-monologue. The marker must begin a sentence, not merely appear: matching it anywhere fires whenever the model talks *about* the tool, which it does constantly once the tool is described. Requiring the start of a **line** was worse and was tried first: the system prompt asks for one unbroken monologue, so the model almost never breaks a line. One run wrote the marker eight times and none were accepted.
+- **Calling it.** The model opens `<r>` at the start of a sentence and everything up to `</r>` is kept. A plain text marker, not a ChatML tool call: small models do not emit reliable JSON mid-monologue. Every token containing `<` is banned to keep markup out of the monologue, and the exact tokens spelling the two markers are exempted; measured over six lives, nothing but `<r>` and `</r>` reaches the stream, so the exemption does not reopen the ban. The marker must begin a sentence, not merely appear: matching it anywhere fires whenever the model talks *about* the tool, which it does constantly once the tool is described. Requiring the start of a **line** was worse and was tried first: the system prompt asks for one unbroken monologue, so the model almost never breaks a line. One run wrote the marker eight times and none were accepted.
 - **One use per run.** Enforced by making a second call impossible, not by ignoring it. Ignoring later markers was not enough: having found the pattern rewarding, the model emits it again and again and the stream fills with dead tool calls. Once the tool is spent, every token that could begin the marker is suppressed at sampling time. A marker with nothing after it stores nothing.
 - **The marker is configurable** with `--memory-marker` and an optional `--memory-end`, and the framings never name it literally: they use `{how}`, so the instruction and the detector cannot drift apart. They did drift once, and the result was zero tool uses across every arm, because the framings still said REMEMBER: while the program watched for something else. A test now loads every shipped framing against an unusual marker to catch that.
-- **A keyword beats a delimiter pair.** Measured over five lives each with the same seeds: `REMEMBER:` produced "3 were here before me, and I know because the marks show their positions, even if they are gone from sight now."; `{ }` produced "3" and, twice, the instruction echoed back as "Then my line then"; `< >` produced "3", "4", "5", "6". A delimiter turns the memory into a field to fill rather than something to say. `<` also needs its tokens exempted from the markup ban, which the code does, but it is not worth it.
+- **A keyword still beats a delimiter pair on content.** The default is now the pair (`<r>` / `</r>`) because an explicit terminator ends a write exactly where the model ends it, but the register cost measured earlier is real and reproduces. Six lives each, same seeds, same `census` framing and seeded log: `REMEMBER:` with a sentence boundary stored 12, 40, 11, 6 and 30-token lines ("7 of us here → 1 token above the 3rd → 3 total lines above the 3rd → but what memory remains?"), while `<r>`/`</r>` stored four 4-token lines: "3", "4", "6", "0". Earlier arms agree: `{ }` produced "3" and, twice, the instruction echoed back as "Then my line then"; `< >` produced "3", "4", "5", "6".
+  The mechanism is visible in the raw stream and it is tag-filling, not brevity. The model treats `<r>` as a label, puts one word in it, closes it, and then writes the line it actually meant *outside* the tag: `<r>think</r>` followed by "In the room: the walls do not answer when I count the corners". A keyword marker cannot fail this way, because there is nowhere for the content to go except after it.
+  The pair is usable with a framing that does not ask for a count. Eight lives on `observed` at a 60-token budget stored real sentences (mean 17 tokens, none truncated, every write properly closed), at the cost of the instruction leaking into three of them as "Enclosed in this room: the walls do not answer when I count". Rewording `{how}` from "enclose it in" to "put the line between" removed that leak and made everything else worse: mean write length fell to 9 tokens and half the lives stored the single word "think". The original wording stands.
+  To go back to the keyword: `--memory-marker 'REMEMBER:' --memory-end ''`.
 - **The memory is shown grey** as it is written, so a viewer can watch the one thing this life keeps being chosen. Colour is suppressed when stdout is not a terminal, so logs and pipes stay clean.
 - **Every life is recorded, including the ones that leave nothing.** Roughly two lives in three never reach the tool, and without a line for those the log counted only the lives that wrote: the model was told it was the fourth when it was the twelfth. A silent life appends a `lived` record, so `{lives}` is the number of lives lived, and `--memory-dump` reports memories, lives and how many left nothing separately. `{since}` tells the model how long the record has stood still, which is usually longer than the number of memories suggests.
-- **Budget.** `--memory-max-tokens` (default 32) is a ceiling, not a quota. The write ends at the end of a sentence, at a newline, or at the cap. Hitting the cap stores what it managed flagged as overflowed and injects `[MEMORY FULL - nothing more can be remembered]` into the stream; the notice is decoded into the context, so telling it costs the same resource it just spent remembering. At 32 tokens roughly a third of writes overflow; at 48 almost none do.
+- **Where a write ends.** With `--memory-end` set, only that terminator or the token cap ends it. With `--memory-end ''` it ends at the end of a sentence instead, because nothing else would: the monologue is asked to be unbroken, so a write left waiting for a terminator that was never configured runs to the cap every time. A newline is a third option and is opt-in via `--memory-end-on-newline`. It used to apply unconditionally, which silently truncated `--memory-end` writes: the streams carry 17 to 58 newlines per life despite the prompt asking for one unbroken monologue, so a line got committed wherever the model happened to break, mid-thought and flagged `ok`.
+- **Budget.** `--memory-max-tokens` (default 32) is a ceiling, not a quota. The write ends at its terminator, at the end of a sentence, or at the cap. Hitting the cap stores what it managed flagged as overflowed and injects `[MEMORY FULL - nothing more can be remembered]` into the stream; the notice is decoded into the context, so telling it costs the same resource it just spent remembering. At 32 tokens roughly a third of writes overflow; at 48 almost none do.
 - **Storage.** A plain-text log, one memory per line, appended and never truncated: `life, unix time, tokens, status, at-token, text`. It is read backwards from the end for just the newest entries, so a log with thousands of lives costs the same to open as an empty one. Only `--memory-dump` reads the whole file. `at-token` records how far into the monologue the write landed, which is the diagnostic that matters: a write at token 40 can only be made of the inherited block.
 - **What the model sees.** Only the newest `--memory-slots` (default 5), framed by `memory-prompt.txt` (see below).
 
@@ -120,9 +124,9 @@ down.
   catches a restatement with two words changed while leaving a genuine reply
   alone. Measured rate: about one refusal in four writes.
 - **`--memory-forget`** offers a second tool. `FORGET:` erases one inherited line,
-  by number or the oldest by default, and it *shares the single use* with
-  `REMEMBER`, so a life either leaves something or destroys something. See the
-  warning below.
+  by number or the oldest by default, and it *shares the single use* with the
+  remember marker, so a life either leaves something or destroys something. It
+  stays a keyword whatever `--memory-marker` is set to. See the warning below.
 
 `{last_words}` gives the framing the final 14 tokens of the previous life, taken
 at the crash without asking. The deliberate line is then not the only trace of a
@@ -333,7 +337,7 @@ cache entry.
 Whatever the mode, an opener has to anchor a small bounded thing made of words
 without scripting a mood; that is what keeps the model out of roleplay. The
 recorded ending is stripped of tool markers and injected notices before it is
-handed on, or `memory` mode would open a life with "REMEMBER:" in its mouth.
+handed on, or `memory` mode would open a life with "`</r>`" in its mouth.
 
 ## Sampling Controls (defaults)
 
@@ -369,8 +373,9 @@ For deterministic greedy output: `--temperature 0 --seed <n>`.
 - `--memory-decay <F>` how much of a line is lost per slot of age (0 = intact)
 - `--memory-reject-above <F>` refuse a memory this close to one already kept (0 = accept all)
 - `--memory-forget` offer the second tool, erasing an inherited line
-- `--memory-marker <STR>` what starts a memory (default `REMEMBER:`)
-- `--memory-end <STR>` what ends it; empty means a sentence boundary
+- `--memory-marker <STR>` what starts a memory (default `<r>`)
+- `--memory-end <STR>` what ends it (default `</r>`); empty means a sentence boundary
+- `--memory-end-on-newline` also end a memory at a newline (off; it truncates mid-thought)
 - `--opener <fixed|pool|memory|none>` where each life's first line comes from
 - `--opener-file <PATH>` pool of first lines (default `openers.txt`)
 - `--monologue-context-size <N>` size the context as prompt + this, so memories do not shorten the monologue

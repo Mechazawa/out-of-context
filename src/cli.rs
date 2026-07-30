@@ -177,16 +177,22 @@ pub struct Args {
 
     /// What the model writes to start a memory. Any token containing `<` is
     /// normally banned to keep markup out of the monologue; the exact tokens
-    /// spelling this marker are exempted, so a marker like `<` works without
+    /// spelling this marker are exempted, so a marker like `<r>` works without
     /// reopening that ban.
-    #[arg(long, default_value = "REMEMBER:")]
+    #[arg(long, default_value = "<r>")]
     pub memory_marker: String,
 
-    /// What ends a memory. Empty means the write ends at the end of a sentence, at
-    /// a newline, or at the token cap. Set it to close a delimiter pair, for
-    /// instance `--memory-marker '<' --memory-end '>'`.
-    #[arg(long, default_value = "")]
+    /// What ends a memory. An explicit terminator ends the write exactly there.
+    /// Empty instead ends it at the end of a sentence, which suits a keyword
+    /// marker: `--memory-marker 'REMEMBER:' --memory-end ''`.
+    #[arg(long, default_value = "</r>")]
     pub memory_end: String,
+
+    /// Also end a memory at a newline. Off by default: the monologue is asked to
+    /// be unbroken, so a newline mid-write is the model faltering rather than
+    /// finishing, and committing there silently truncates the line.
+    #[arg(long)]
+    pub memory_end_on_newline: bool,
 
     /// How much of a remembered line is lost per slot of age, 0 to 1. At 0.2 the
     /// newest memory is intact and the fifth has lost most of itself. The log on

@@ -76,6 +76,7 @@ async fn main() -> Result<()> {
                 slots: args.memory_slots,
                 marker: args.memory_marker.clone(),
                 end: args.memory_end.clone(),
+                end_on_newline: args.memory_end_on_newline,
                 decay: args.memory_decay.clamp(0.0, 1.0),
                 reject_above: args.memory_reject_above.clamp(0.0, 1.0),
                 forget: args.memory_forget,

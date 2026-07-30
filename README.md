@@ -54,7 +54,7 @@ Building requires `cmake` and a C/C++ toolchain for llama.cpp.
 
 ## The One Tool
 
-With `--memory-file`, the model can remember. Once per life it may write `REMEMBER:` at the start of a sentence, and up to 32 tokens of that line outlive it. Nothing else survives.
+With `--memory-file`, the model can remember. Once per life it may open `<r>` at the start of a sentence, and up to 32 tokens of what it writes before `</r>` outlive it. Nothing else survives. Both markers are configurable (`--memory-marker`, `--memory-end`); a keyword marker with no terminator ends the memory at the end of the sentence instead, which stores richer lines but is at the mercy of where the sentence lands.
 
 ```bash
 ./out-of-context --model models/Bonsai-4B-Q1_0.gguf --monologue-context-size 340 \

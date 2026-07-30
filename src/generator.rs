@@ -114,6 +114,8 @@ pub struct MemoryConfig {
     pub marker: String,
     /// What ends it, or empty for a sentence boundary.
     pub end: String,
+    /// Whether a newline also ends a write.
+    pub end_on_newline: bool,
     /// Fraction of a remembered line lost per slot of age. 0 keeps them intact.
     pub decay: f32,
     /// Word overlap above which a memory counts as something already known and
@@ -317,6 +319,37 @@ fn marker_at_sentence_start(tail: &str, marker: &str) -> bool {
 /// Shown to the model when its write runs past the token budget. Costs context
 /// to deliver, which is the same resource it just spent remembering.
 const MEMORY_FULL_NOTICE: &str = "\n[MEMORY FULL - nothing more can be remembered]\n";
+
+/// Where a write stops.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum WriteEnd {
+    /// Still writing.
+    Open,
+    /// Ends before this token, which is the terminator and not content.
+    Closed,
+    /// Ends with this token, which carries the sentence's final punctuation.
+    Sentence,
+}
+
+/// Decides whether this token ends the memory being written.
+///
+/// The sentence boundary exists because waiting for an explicit terminator that
+/// was never configured means every memory runs to the cap and is marked
+/// overflowed: the monologue is asked to be unbroken, so nothing ends the line on
+/// its own. That same fact is why a newline is opt-in. A newline arriving
+/// mid-write is the model faltering, not finishing, and committing there cut
+/// `--memory-end` writes short before they reached their terminator.
+fn write_end(mem: &MemoryConfig, written: &str, token_text: &str, tokens: usize) -> WriteEnd {
+    let closed =
+        !mem.end.is_empty() && (written.contains(&mem.end) || token_text.contains(&mem.end));
+    if closed || (mem.end_on_newline && token_text.contains('\n')) {
+        return WriteEnd::Closed;
+    }
+    if mem.end.is_empty() && tokens >= 4 && token_text.trim_end().ends_with(['.', '!', '?']) {
+        return WriteEnd::Sentence;
+    }
+    WriteEnd::Open
+}
 
 /// Tracks the single permitted use of the tools across the run.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -599,27 +632,8 @@ pub fn generate_infinite(
                     }
                 }
                 MemoryState::Writing => {
-                    // The write ends at a newline or at the end of a sentence,
-                    // whichever comes first. Waiting for a newline alone means
-                    // almost every memory runs to the cap and is marked as
-                    // overflowed, because the monologue is asked to be unbroken.
-                    // An explicit terminator, when configured, ends the write
-                    // exactly; otherwise it ends at the end of a sentence.
-                    let closed = !mem.end.is_empty()
-                        && (memory_text.contains(&mem.end) || token_text.contains(&mem.end));
-                    let sentence_end = mem.end.is_empty()
-                        && memory_count >= 4
-                        && token_text.trim_end().ends_with(['.', '!', '?']);
-                    if closed || token_text.contains('\n') || sentence_end {
-                        if sentence_end {
-                            memory_text.push_str(&token_text);
-                            memory_count += 1;
-                        }
-                        injection =
-                            commit_memory(mem, &mut memory_text, memory_count, false, generated_tokens, cfg)?;
-                        memory_state = MemoryState::Done;
-                        output.set_highlight(false);
-                    } else {
+                    let end = write_end(mem, &memory_text, &token_text, memory_count);
+                    if end == WriteEnd::Open {
                         memory_text.push_str(&token_text);
                         memory_count += 1;
                         if memory_count >= mem.max_tokens {
@@ -628,6 +642,15 @@ pub fn generate_infinite(
                             output.set_highlight(false);
                             injection = Some(MEMORY_FULL_NOTICE);
                         }
+                    } else {
+                        if end == WriteEnd::Sentence {
+                            memory_text.push_str(&token_text);
+                            memory_count += 1;
+                        }
+                        injection =
+                            commit_memory(mem, &mut memory_text, memory_count, false, generated_tokens, cfg)?;
+                        memory_state = MemoryState::Done;
+                        output.set_highlight(false);
                     }
                 }
                 MemoryState::Done => {}
@@ -1169,3 +1192,7 @@ fn default_user_prompt() -> String {
     // instruct model slip into answering/helping instead of just thinking.
     "Think to yourself.".to_string()
 }
+
+#[cfg(test)]
+#[path = "generator_tests.rs"]
+mod tests;
