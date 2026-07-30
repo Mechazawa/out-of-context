@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate Out of Context on the target board (e.g. Orange Pi 2W).
+# Validate Generational Trauma on the target board (e.g. Orange Pi 2W).
 # Measures raw generation speed, peak memory, and the overflow crash.
 #
 # Usage: scripts/check-device.sh [path-to-binary] [path-to-model.gguf]
@@ -7,7 +7,7 @@
 
 set -u
 
-BIN="${1:-./out-of-context}"
+BIN="${1:-./generational-trauma}"
 MODEL="${2:-models/Bonsai-4B-Q1_0.gguf}"
 THREADS="${THREADS:-4}"
 

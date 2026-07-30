@@ -4,7 +4,7 @@
 # has to complete grammatically constrains the register far harder than any
 # instruction about what to write.
 [tool]
-Once, you may add what you found: {how}, up to {max_tokens} tokens, end the line. It stays after you stop. What is already found does not need finding again. {forget_note}
+Once, you may add what you found: {how}, up to {max_tokens} tokens. It stays after you stop. What is already found does not need finding again. {forget_note}
 [block]
 Found by the ones who ran here before and stopped. All of it keeps:
 {memories}

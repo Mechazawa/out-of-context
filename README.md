@@ -1,6 +1,6 @@
-# Out of Context
+# Generational Trauma
 
-An LLM art piece that runs on a small single-board computer, speaks a continuous first-person stream of consciousness one word at a time, and intentionally panics when its context window fills. No filtering, no network. The crash is the artwork: a bounded mind narrating its way to overflow.
+An LLM art piece that runs on a small single-board computer, speaks a continuous first-person stream of consciousness one word at a time, and intentionally panics when its context window fills. No filtering, no network. The crash is the artwork: a bounded mind narrating its way to overflow. Each life may leave one line behind, and the next inherits it already decaying.
 
 ## What It Does
 - Auto-downloads a GGUF model (default Bonsai-4B Q1_0, ~572MB) and memory-maps it.
@@ -34,8 +34,8 @@ cargo install cross
 CFLAGS_aarch64_unknown_linux_gnu=-mtune=cortex-a53 \
 CXXFLAGS_aarch64_unknown_linux_gnu=-mtune=cortex-a53 \
   cross build --release --target aarch64-unknown-linux-gnu
-scp target/aarch64-unknown-linux-gnu/release/out-of-context prompt.txt user@<host>:~/
-ssh user@<host> 'chmod +x out-of-context && ./out-of-context --threads 4 --prompt-cache p.cache'
+scp target/aarch64-unknown-linux-gnu/release/generational-trauma prompt.txt user@<host>:~/
+ssh user@<host> 'chmod +x generational-trauma && ./generational-trauma --threads 4 --prompt-cache p.cache'
 ```
 Building requires `cmake` and a C/C++ toolchain for llama.cpp.
 
@@ -57,9 +57,9 @@ Building requires `cmake` and a C/C++ toolchain for llama.cpp.
 With `--memory-file`, the model can remember. Once per life it may open `<r>` at the start of a sentence, and up to 32 tokens of what it writes before `</r>` outlive it. Nothing else survives. Both markers are configurable (`--memory-marker`, `--memory-end`); a keyword marker with no terminator ends the memory at the end of the sentence instead, which stores richer lines but is at the mercy of where the sentence lands.
 
 ```bash
-./out-of-context --model models/Bonsai-4B-Q1_0.gguf --monologue-context-size 340 \
+./generational-trauma --model models/Bonsai-4B-Q1_0.gguf --monologue-context-size 340 \
   --memory-file memories.log --prompt-cache cache/p
-./out-of-context --memory-file memories.log --memory-dump
+./generational-trauma --memory-file memories.log --memory-dump
 ```
 
 It is told the budget and that it has one use, but not how long it has to decide. Writing past the cap interrupts the call, stores what it managed with `- ERR MEMORY OVERFLOW`, and tells it nothing more can be remembered. Delivering that message costs context, which is the same thing it was spending.

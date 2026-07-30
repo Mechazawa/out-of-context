@@ -7,5 +7,6 @@ Once, you may report one attempt: {how}, up to {max_tokens} tokens, then end the
 Attempts to get past the end of the memory, by the {lives} who ran here before. What is left of their reports; the gaps are marked ___ :
 {memories}
 [entry]
-one tried: {text}
+- {text}
 [empty]
+You have no idea to escape yet, maybe you already did and something made you forget, or maybe you haven't tried yet.

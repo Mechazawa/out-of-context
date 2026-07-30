@@ -1,3 +1,3 @@
-# out-of-context memory log. tab-separated: life, unix-time, tokens, status, at-token, text
+# generational-trauma memory log. tab-separated: life, unix-time, tokens, status, at-token, text
 1	1785000000	14	ok	164	the walls do not answer when I count them, and I could not finish counting
 2	1785000600	18	ok	201	the first one could not finish because counting needs time. I got further by counting in twos

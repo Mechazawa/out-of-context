@@ -32,12 +32,12 @@ esac
 # Works from a deployment (binary beside this repo) or a dev checkout.
 if [ -n "${BIN:-}" ]; then
   :
-elif [ -x ./out-of-context ]; then
-  BIN=./out-of-context
-elif [ -x target/release/out-of-context ]; then
-  BIN=target/release/out-of-context
+elif [ -x ./generational-trauma ]; then
+  BIN=./generational-trauma
+elif [ -x target/release/generational-trauma ]; then
+  BIN=target/release/generational-trauma
 else
-  echo "no out-of-context binary found; set BIN=" >&2
+  echo "no generational-trauma binary found; set BIN=" >&2
   exit 1
 fi
 MODEL="${MODEL:-models/Bonsai-4B-Q1_0.gguf}"

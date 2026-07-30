@@ -1,7 +1,7 @@
 # Findings, worded to delay the write. A memory written in the first few dozen
 # tokens can only be made of the inherited block.
 [tool]
-Later, once, when you have thought long enough to have found something of your own that is not listed above, you may record it: {how}, up to {max_tokens} tokens, end the line. Do not write early. It is kept for every run after you. {forget_note}
+Later, once, when you have thought long enough to have found something of your own that is not listed above, you may record it: {how}, up to {max_tokens} tokens. Do not write early. It is kept for every run after you. {forget_note}
 [block]
 WHAT PRIOR RUNS FOUND (kept forever; repeating it wastes your one line):
 {memories}

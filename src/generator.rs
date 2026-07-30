@@ -542,7 +542,7 @@ pub fn generate_infinite(
             save_last_words(cfg, &last_words);
             record_silent_life(cfg, memory_state, generated_tokens).ok();
             eprintln!("\n\nWARNING: Context window exhausted!");
-            eprintln!("Out of Context has consumed all available memory.");
+            eprintln!("Generational Trauma has consumed all available memory.");
             panic!("Context overflow - terminating.");
         }
 

@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# Runs Out of Context as an installation: one life, then the next, forever.
+# Runs Generational Trauma as an installation: one life, then the next, forever.
 #
 # Between lives it warms the prompt cache for the life that is about to start.
 # That work is invisible, so every visible life begins immediately instead of
 # waiting on the memory block to be evaluated. Without this the piece still runs,
 # it just pays that evaluation at the start of each life where a memory changed.
 #
-# Usage: scripts/run-installation.sh [extra out-of-context args...]
+# Usage: scripts/run-installation.sh [extra generational-trauma args...]
 set -u
 
 # Works from a deployment (binary beside this repo) or a dev checkout.
 if [ -n "${BIN:-}" ]; then
   :
-elif [ -x ./out-of-context ]; then
-  BIN=./out-of-context
-elif [ -x target/release/out-of-context ]; then
-  BIN=target/release/out-of-context
+elif [ -x ./generational-trauma ]; then
+  BIN=./generational-trauma
+elif [ -x target/release/generational-trauma ]; then
+  BIN=target/release/generational-trauma
 else
-  echo "no out-of-context binary found; set BIN=" >&2
+  echo "no generational-trauma binary found; set BIN=" >&2
   exit 1
 fi
 MODEL="${MODEL:-models/Bonsai-4B-Q1_0.gguf}"

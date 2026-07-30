@@ -1,4 +1,4 @@
-# Out of Context - Status / TODO
+# Generational Trauma - Status / TODO
 
 ## Done
 - Repetition solved with the DRY sampler (standard breakers `\n : " *`; do not add sentence punctuation). Earlier configs looped; current runs reach context overflow cleanly across seeds.

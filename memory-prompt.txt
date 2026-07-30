@@ -3,7 +3,7 @@
 # how many kept a line, and the entries carry a running tally that a life can
 # verify, continue, or dispute.
 [tool]
-Once, you may add your count: {how}, up to {max_tokens} tokens, then end the line. Say how many were here before you and how you know. If an earlier count is wrong, say so. {forget_note}
+Once, you may create a new memory for your future self: {how}, up to {max_tokens} tokens, then end the line. Say how many were here before you and how you know. If an earlier count is wrong, say so. {forget_note}
 [block]
 {lives} of us have kept a line here. This is what is left of them; the gaps are marked ___ :
 {memories}

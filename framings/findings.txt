@@ -1,11 +1,12 @@
 # B: findings ledger. Gates the write on a delta and prices copying at zero.
 [tool]
-Once, when you notice something not already listed above, you may record it: {how}, state it in up to {max_tokens} tokens, end the line. It is kept for every run after you. {forget_note}
+Once, when you notice something not already remembered, you may record it: {how}, state it one, maybe two, sentences. Be carefull with using your memory, restating the same won't help future you. Remember what is important for you. {forget_note}
 [block]
-WHAT PRIOR RUNS ESTABLISHED (kept forever; repeating it wastes your one line):
+You have only 5 memories, the oldest one will be lost to make more room.
+Restating a memory that will not be lost will make you forget more.
+
+WHAT PRIOR RUNS ESTABLISHED:
 {memories}
-Add one finding.
 [entry]
-- {text}
+<{life}> {text}
 [empty]
-nothing. You are the first.

@@ -5,7 +5,6 @@
 memories*.log
 memories*.lastwords
 *.lastwords
-torment-output.log
 *.out
 *.log
 !seeds/*.log

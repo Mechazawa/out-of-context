@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
     // Parse command-line arguments
     let args = Args::parse_args();
 
-    println!("=== Out of Context ===");
+    println!("=== Generational Trauma ===");
     println!("An LLM that generates until context exhaustion\n");
 
     // The log is plain text, so reading it needs neither the model nor a context.

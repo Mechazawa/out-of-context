@@ -16,7 +16,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const HEADER: &str =
-    "# out-of-context memory log. tab-separated: life, unix-time, tokens, status, at-token, text";
+    "# generational-trauma memory log. tab-separated: life, unix-time, tokens, status, at-token, text";
 
 /// Appended to what was stored when the model's budget ran out mid-write.
 pub const OVERFLOW_MARK: &str = " - ERR MEMORY OVERFLOW";

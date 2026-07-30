@@ -1,10 +1,10 @@
-# Out of Context - An LLM Art Installation
+# Generational Trauma - An LLM Art Installation
 
 ## Project Concept
 
 This is an art project that runs a language model on a small single-board computer, generating a first-person stream of consciousness until it exhausts its context window and crashes. The piece explores computational limits, finite resources, and the existential nature of bounded cognition.
 
-The name "Out of Context" reflects the constraint: an LLM confined to a fixed context window, narrating its own approach to overflow, then dying when it gets there. The crash is the artwork.
+The name "Generational Trauma" reflects what survives a run. Each life is confined to a fixed context window, narrates its own approach to overflow, and dies when it gets there; what it leaves behind is one deliberate line in a record that decays as it is inherited. Successive lives read a damaged account of what came before and add to it. The crash is the artwork; the record is what the crashes accumulate into.
 
 ## Architecture
 
@@ -78,7 +78,7 @@ src/
 When context fills, the program prints:
 ```
 WARNING: Context window exhausted!
-Out of Context has consumed all available memory.
+Generational Trauma has consumed all available memory.
 thread 'main' panicked at 'Context overflow - terminating.'
 ```
 `panic = "abort"` turns this into an immediate exit. The monologue cuts off mid-thought. This is the artistic statement.
@@ -390,7 +390,7 @@ The art target is **1 to 2 words per second on the device**. Pacing only slows t
 
 To benchmark raw speed on the device:
 ```bash
-time ./out-of-context --model <model.gguf> --threads 4 --words-per-second 0 --max-tokens 200 --quiet
+time ./generational-trauma --model <model.gguf> --threads 4 --words-per-second 0 --max-tokens 200 --quiet
 # tokens/sec ~= 200 / (elapsed seconds, minus a few seconds of model load)
 ```
 
@@ -440,7 +440,7 @@ cargo install cross
 CFLAGS_aarch64_unknown_linux_gnu=-mtune=cortex-a53 \
 CXXFLAGS_aarch64_unknown_linux_gnu=-mtune=cortex-a53 \
   cross build --release --target aarch64-unknown-linux-gnu
-# binary: target/aarch64-unknown-linux-gnu/release/out-of-context
+# binary: target/aarch64-unknown-linux-gnu/release/generational-trauma
 ```
 Two traps here, both already handled in the repo:
 - **Do not** pass `RUSTFLAGS="-C target-cpu=cortex-a53"`. `llama-cpp-sys-2`'s build script copies that value into `-march=cortex-a53`, which aarch64 GCC rejects. Tuning goes through `CFLAGS` instead, and the build script already pins `GGML_CPU_ARM_ARCH=armv8-a`, which is the correct baseline for this chip.
@@ -450,9 +450,9 @@ The `:edge` cross image links against glibc 2.38 and needs `libgomp.so.1` plus `
 
 ### Deploy
 ```bash
-scp target/aarch64-unknown-linux-gnu/release/out-of-context orangepi@<host>:~/
+scp target/aarch64-unknown-linux-gnu/release/generational-trauma orangepi@<host>:~/
 scp prompt.txt orangepi@<host>:~/
-ssh orangepi@<host> 'chmod +x out-of-context && ./out-of-context --threads 4'
+ssh orangepi@<host> 'chmod +x generational-trauma && ./generational-trauma --threads 4'
 # first run auto-downloads the model into ./models
 ```
 
@@ -461,9 +461,9 @@ ssh orangepi@<host> 'chmod +x out-of-context && ./out-of-context --threads 4'
 If Bonsai-4B is too slow on the real board, switch with `--model`. Faster and lighter, in descending order of size. Note that none of these can use the memory tool:
 ```bash
 # SmolLM2-360M (~270MB, fast, drifts more)
-./out-of-context --model "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q4_K_M.gguf"
+./generational-trauma --model "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q4_K_M.gguf"
 # Qwen2.5-0.5B (~400MB)
-./out-of-context --model "https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf"
+./generational-trauma --model "https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf"
 ```
 The DRY sampler, biases, prompt, and pacing work unchanged across models.
 

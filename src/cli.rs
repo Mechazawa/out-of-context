@@ -18,7 +18,7 @@ pub enum OpenerMode {
     None,
 }
 
-/// Out of Context - An LLM text generator that runs until context exhaustion
+/// Generational Trauma - An LLM text generator that runs until context exhaustion
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
