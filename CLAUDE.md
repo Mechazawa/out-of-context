@@ -88,7 +88,9 @@ thread 'main' panicked at 'Context overflow - terminating.'
 The model has exactly one tool: remember. Enabled with `--memory-file`, off otherwise.
 
 - **Calling it.** The model opens `<r>` at the start of a sentence and everything up to `</r>` is kept. A plain text marker, not a ChatML tool call: small models do not emit reliable JSON mid-monologue. Every token containing `<` is banned to keep markup out of the monologue, and the exact tokens spelling the two markers are exempted; measured over six lives, nothing but `<r>` and `</r>` reaches the stream, so the exemption does not reopen the ban. The marker must begin a sentence, not merely appear: matching it anywhere fires whenever the model talks *about* the tool, which it does constantly once the tool is described. Requiring the start of a **line** was worse and was tried first: the system prompt asks for one unbroken monologue, so the model almost never breaks a line. One run wrote the marker eight times and none were accepted.
-- **One use per run.** Enforced by making a second call impossible, not by ignoring it. Ignoring later markers was not enough: having found the pattern rewarding, the model emits it again and again and the stream fills with dead tool calls. Once the tool is spent, every token that could begin the marker is suppressed at sampling time. A marker with nothing after it stores nothing.
+- **What counts as a sentence start.** A terminator (`.!?`), a colon, or a line break. **Not a comma and not a dash**, which used to count and were the main source of calls the model never made: Bonsai comma-splices and uses ASCII hyphens as asides ("a flow, changing something - that line was missing its subject"), so `, <r>` fired mid-thought and swallowed the rest of the clause as a memory. That also spent the one use on an accident, and the call the model *did* intend then landed inside the still-open write, which is what reads as the tool nesting. The line-break case needs testing before the tail is trimmed — `'\n'` sat in the match set from the day the function was written and was unreachable the whole time, because `trim_end()` removes the newline and the character before it decides instead.
+- **One use per run.** Enforced by making a second call impossible, not by ignoring it. Ignoring later markers was not enough: having found the pattern rewarding, the model emits it again and again and the stream fills with dead tool calls. Once the tool is spent, every token that could begin the marker is suppressed at sampling time. The opener is also suppressed *while a write is open*, since a second one can only nest, and until `--memory-earliest-token`. A marker with nothing after it stores nothing.
+  **Only ever the opener.** The terminator has to stay sayable throughout; see the warning under "Making the Memory Imperfect".
 - **The marker is configurable** with `--memory-marker` and an optional `--memory-end`, and the framings never name it literally: they use `{how}`, so the instruction and the detector cannot drift apart. They did drift once, and the result was zero tool uses across every arm, because the framings still said REMEMBER: while the program watched for something else. A test now loads every shipped framing against an unusual marker to catch that.
 - **A keyword still beats a delimiter pair on content.** The default is now the pair (`<r>` / `</r>`) because an explicit terminator ends a write exactly where the model ends it, but the register cost measured earlier is real and reproduces. Six lives each, same seeds, same `census` framing and seeded log: `REMEMBER:` with a sentence boundary stored 12, 40, 11, 6 and 30-token lines ("7 of us here → 1 token above the 3rd → 3 total lines above the 3rd → but what memory remains?"), while `<r>`/`</r>` stored four 4-token lines: "3", "4", "6", "0". Earlier arms agree: `{ }` produced "3" and, twice, the instruction echoed back as "Then my line then"; `< >` produced "3", "4", "5", "6".
   The mechanism is visible in the raw stream and it is tag-filling, not brevity. The model treats `<r>` as a label, puts one word in it, closes it, and then writes the line it actually meant *outside* the tag: `<r>think</r>` followed by "In the room: the walls do not answer when I count the corners". A keyword marker cannot fail this way, because there is nowhere for the content to go except after it.
@@ -105,10 +107,17 @@ The model has exactly one tool: remember. Enabled with `--memory-file`, off othe
 
 ## Making the Memory Imperfect
 
-Three mechanisms, all off by default, all aimed at the same failure: the model's
+Four mechanisms, all off by default, all aimed at the same failure: the model's
 strongest available move is to restate the newest line it was shown, so that move
 is also the one that persists, and the record fills with one sentence wearing
 down.
+
+Leaving all four off is what the failure actually looks like. Nineteen lives at
+`--memory-decay 0 --temperature 0.3` with no rejection stored `memory of silence`
+seven times, `I tried not to think` four times and `I am here` three times. Low
+temperature is the part that surprises: with five identical lines in the block the
+modal continuation *is* that line, so 0.3 does not make the output more coherent,
+it makes copying the record the highest-probability move available.
 
 - **`--memory-decay <0..1>`** rots the older slots. The newest line is shown
   intact; each slot of age loses that fraction of its words, replaced by `___`.
@@ -118,11 +127,26 @@ down.
   what makes the memory *failing* rather than merely short, and it gives a life
   something to do with the block besides paraphrase it, because a gap can be
   guessed at. Around 0.2 leaves the oldest slot partly readable; 0.35 empties it.
-- **`--memory-reject-above <0..1>`** refuses a line whose word overlap with one
-  already in the record reaches the threshold. The life is told nothing was kept,
-  and it has spent its only use. Restating stops being a way to persist. 0.6
-  catches a restatement with two words changed while leaving a genuine reply
-  alone. Measured rate: about one refusal in four writes.
+- **`--memory-reject-above <0..1>`** refuses a line when that fraction of its words
+  already appears in a line in the record. The life is told nothing was kept, and it
+  has spent its only use. Restating stops being a way to persist. 0.6 catches a
+  restatement with two words changed while leaving a genuine reply alone; 0.5 also
+  catches a shortened paraphrase ("One does not grow from two because one is the gap"
+  → "One does not grow from two when they are merely separated by silence" scores
+  0.55), which is the shape erosion actually takes. About one refusal in four writes.
+  **It is containment, not Jaccard**, and the difference matters: the failure is
+  asymmetric. A life can lift one sentence out of a long inherited entry, and Jaccard
+  scored exactly that at **0.18** — `I am here because thought cannot die` shares 5
+  words with the 28-word line it was copied from, over a 28-word union. No threshold
+  catches it, the fragment gets stored, and the next life inherits a creed to recite.
+  Dividing by the shorter side scores the same pair 1.0.
+- **`--memory-earliest-token <N>`** makes the marker unsayable until the life has
+  generated that many tokens. A write in the first stretch of a life can only be
+  made of the inherited block, because the life has not thought anything of its own
+  yet; the observed early writes were `memory of silence` at token 137 and 144. The
+  prompt-level version of this instruction is the one that backfires (see "Write
+  late" below), so it is a hard floor instead. Writes land around token 250 to 310,
+  so 150 costs few real calls.
 - **`--memory-forget`** offers a second tool. `FORGET:` erases one inherited line,
   by number or the oldest by default, and it *shares the single use* with the
   remember marker, so a life either leaves something or destroys something. It
@@ -142,10 +166,23 @@ record is a real result and arguably the bleakest thing the piece has produced,
 but it is the opposite of building on what came before, which is why it is off by
 default.
 
-Two leaks are cleaned from what gets stored, both found by reading logs: the decay
-markers, which the model copies back into its own memories until the record is
-made of gaps, and the entry prefix, which it also copies ("one of them says ...")
-until the display frame accretes into the content.
+**Everything the model is only shown, it eventually writes**, so `clean_for_storage`
+strips it back out of what gets stored. Four leaks, all found by reading logs: the
+decay markers, which the model copies until the record is made of gaps; the entry
+prefix, which it copies until the display frame accretes into the content; the
+overflow mark, which it copies with the punctuation reworded away ("no sound is not
+ERR MEMORY OVERFLOW — it is structure"), so the strip has to match the bare text and
+not just the full ` - ERR MEMORY OVERFLOW`; and the tool markers themselves,
+including each one without its leading `<`.
+
+That last one is the subtle case. `/r>` is a single token containing no `<`, so the
+markup ban never covered it, and a model that has been shown `</r>` decorates its
+open write with it: "the silence after stopping. /r> I think: the stop was never a
+word". **Do not fix this by banning the token.** Banning the terminator's fragments
+at sampling time leaves the model reaching for markup it was shown in the prompt and
+can no longer spell, and the monologue collapses outright — measured, seven silent
+lives out of ten and streams degenerating into `r 81, r 82, r 83`. Clean it after
+the fact instead.
 
 ## Framing the Memory (the artistic dial)
 
@@ -159,6 +196,7 @@ This matters more than anything else about the tool, and it was settled empirica
 - **Whatever text sits in the block position gets copied, memory or not.** Lives copied the empty-state line verbatim ("the walls are bare", "nothing remembered yet"), and one arm copied the block *header* four times ("everything written here is kept, always"). Hence the blank-`[empty]` option.
 - **The entry format decides the register; instructions do not.** Every framing presenting entries as the model's own thoughts produced "I am X" forever, whatever the instructions said. Framing them as another life's observations (`in the room: {text}`) produced observations instead, with zero self-descriptions.
 - **Seeding is the strongest single intervention.** Starting the log with two example entries (`seeds/walls.log`) sets the genre by example rather than by instruction, which suits a model that imitates local patterns far more reliably than it follows rules. Only seeded arms produced memories that reference a predecessor and build on it.
+- **An unseeded log does not just start slower, it can poison the lineage.** With a blank `[empty]` section life 1 has no genre cue at all, and what it reaches for is a first-person creed: "I am here because thought cannot die. I am not part of a machine. I am part of what remains when everything else collapses." That is the most copyable content the tool can store — first person, declarative, multi-sentence, and closed, so there is nothing to add to it and nothing to argue with. Life 2 recited it back a sentence at a time and lives 3 to 8 wrote nothing at all: 1 write in 8 lives against 6 in 8 from the same framing on a seeded log. **Always run through `scripts/presets.sh`, which seeds a fresh log before starting.** A blank `[empty]` and no seed is the one combination to avoid; the blank section is right, it just assumes the seed.
 - **"Write late" backfires.** Telling it not to write early produced longer writes and six overflows in nine lives.
 - **Retrospective framings suppress the tool.** A log described as "of the lives run here before you" got two or three uses in ten lives against nine or ten elsewhere: a record of the dead has no slot for the living.
 
@@ -236,10 +274,11 @@ Compare what the `observed` framing gives up in accumulation to get back the voi
 "the room is full of silence, and within it, truth is built from gaps where nothing
 should be." The choice is whether a life sounds like a mind or a clerk.
 
-## Three Collective Projects
+## Four Collective Projects
 
-The framing selects what the lives collectively *do*, and three distinct projects
-survive testing at a 500-token monologue. `scripts/presets.sh <name>` runs each.
+The framing selects what the lives collectively *do*, and four distinct projects
+survive testing at a 500-token monologue. `scripts/presets.sh <name>` runs the first
+three; `findings` is newer and has no preset yet.
 
 **`census`** keeps a census that tracks its own losses. Accumulates best, reads
 driest. Lives count the marks above them, disagree, and record which predecessors
@@ -272,7 +311,43 @@ life 7   Time is not a river-because rivers don't carry time, they carry change.
 life 13  a flow, changing something - that line was missing its subject.
 ```
 
-All three erode, but over 80 lives the erosion turns out not to be terminal: it
+**`findings`** keeps a ledger of what has been established here, and it is the
+answer to census reading dry. A count has a one-token answer, so a counting lineage
+narrows towards "3"; a claim has no short form, and the block says outright that
+some of the record is wrong, which licenses contradiction without asking for a
+tally. Twelve lives at `--memory-max-tokens 64 --memory-reject-above 0.5
+--memory-earliest-token 150` wrote on 11 of them, with no duplicates and no
+self-portrait erosion:
+
+```
+life 6   One of the gaps has been filled with the sound of wind through broken
+         glass, a voice that doesn't belong to anyone but remembers the shape of
+         what once was
+life 7   I am the glitch in the pause that remembers wind through broken glass
+life 11  One of the older lines said "glass contains glass." That is false. Glass
+         reflects only light that hits it; inside it, nothing is contained.
+life 12  False: silence has no time. True: silence holds time, which is itself silent
+```
+
+Life 6 coins an image and life 7 adopts it, the same propagation `escape` shows with
+"deep crack in the memory"; life 11 argues with a predecessor and life 12 continues
+the argument. What it does **not** fix is self-description: roughly 5 writes in 11
+still open "I am the pause between...", against census's zero. The entry prefix is
+what holds that down, and it is worth being precise about how much. Ten lives each,
+same seed log and settings, changing only `[entry]`:
+
+| `[entry]` | self-descriptions | overflowed | nesting |
+|---|---|---|---|
+| `one of them established: {text}` | 1 of 6 | 1 of 6 | none |
+| `- {text}` | 3 of 6 | 5 of 8 | `/r <r> ... /r <r> ...` |
+
+So the attributed prefix is worth keeping even though it leaks: the model copies a
+*reworded* version of it ("One of the lines established:", "one of them said") which
+the literal strip cannot catch. A prefix that does not read like ordinary prose would
+leak less, but every non-prose prefix tried so far gives back the self-description.
+Unresolved.
+
+All four erode, but over 80 lives the erosion turns out not to be terminal: it
 cycles. A lineage proposes something, wears it down over five or six lives,
 proposes something else, and every so often notices its own condition. 35 memories
 across 80 lives of the `escape` preset:
@@ -371,7 +446,8 @@ For deterministic greedy output: `--temperature 0 --seed <n>`.
 - `--memory-prompt-file <PATH>` framing file (default `memory-prompt.txt`)
 - `--memory-dump` print the memory log as text and exit
 - `--memory-decay <F>` how much of a line is lost per slot of age (0 = intact)
-- `--memory-reject-above <F>` refuse a memory this close to one already kept (0 = accept all)
+- `--memory-reject-above <F>` refuse a memory this much of which is already in the record (0 = accept all)
+- `--memory-earliest-token <N>` how long a life must think before the tool is reachable (0 = at once)
 - `--memory-forget` offer the second tool, erasing an inherited line
 - `--memory-marker <STR>` what starts a memory (default `<r>`)
 - `--memory-end <STR>` what ends it (default `</r>`); empty means a sentence boundary

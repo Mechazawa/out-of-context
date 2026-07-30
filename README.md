@@ -68,11 +68,13 @@ The log is plain text, one memory per line, appended and never truncated, so it 
 
 Memory roughly doubles the prompt, so use `--monologue-context-size` to keep the monologue's budget fixed as memories accumulate rather than letting them shorten each life.
 
-### Three collective projects
+### Four collective projects
 
-`scripts/presets.sh <census|escape|mixed>` picks what the lives collectively do
-with their memory. All three were chosen by testing, and all three eventually
-erode into fragments.
+`scripts/presets.sh <census|escape|mixed|findings>` picks what the lives
+collectively do with their memory. All were chosen by testing, and all eventually
+erode into fragments. Use the script rather than assembling the flags by hand: it
+seeds a fresh log with example entries, and an unseeded lineage can poison itself
+on whatever life 1 happens to write.
 
 - **census** keeps a census that tracks its own losses. Accumulates best, reads
   driest: *"9 was here, 10 was missing, 11 was here before 8th, 12 was missing"*.
@@ -80,13 +82,23 @@ erode into fragments.
   the last sentence of the others, but the gaps were too deep."*
 - **mixed** carries an argument about meaning across lives, and writes most often:
   *"Time is not a river, because rivers don't carry time, they carry change."*
+- **findings** keeps a ledger of claims and lets a life contradict one, which is
+  what census gives up by counting: *"One of the older lines said 'glass contains
+  glass.' That is false. Glass reflects only light that hits it."*
 
-Three settings shape how cruel the memory is, all off by default:
+Four settings shape how cruel the memory is, all off by default:
 `--memory-decay` rots the older lines (the disk log stays pristine),
-`--memory-reject-above` refuses a restatement and costs the life its only use, and
-`--memory-forget` adds a second tool that erases an inherited line instead of
-adding one. `--monologue-context-size 500` matters most of all: writes land around
-token 300, so shorter lives usually die before the model gets to the tool.
+`--memory-reject-above` refuses a restatement and costs the life its only use,
+`--memory-earliest-token` keeps the tool out of reach until the life has thought
+long enough to have something of its own, and `--memory-forget` adds a second tool
+that erases an inherited line instead of adding one. `--monologue-context-size 500`
+matters most of all: writes land around token 300, so shorter lives usually die
+before the model gets to the tool.
+
+Leaving them all off is what the failure looks like: nineteen lives with no decay,
+no rejection and `--temperature 0.3` stored *"memory of silence"* seven times. Low
+temperature is the trap — with identical lines in the block, copying the record *is*
+the highest-probability continuation.
 
 Note that the tool only works with Bonsai-4B. Llama-3.2-1B never writes the marker
 at all, and Bonsai-1.7B copies its own token budget into the record.
